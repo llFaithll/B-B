@@ -31,6 +31,8 @@ from ross1000 import build_movimenti_xml, compute_month_stats
 # --------------------- Config ---------------------
 JWT_ALGORITHM = "HS256"
 JWT_SECRET = os.environ["JWT_SECRET"]
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -50,36 +52,30 @@ async def lifespan(app: FastAPI):
     await db.inventory.create_index([("owner_id", 1)])
     await db.expenses.create_index([("owner_id", 1), ("due_date", 1)])
     
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@bnb.it").lower()
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@bnb.it")
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
-    
-    any_admin = await db.users.find_one({"role": "admin"})
-    
-    if not any_admin:
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
         await db.users.insert_one({
-            "email": admin_email, 
-            "password_hash": hash_password(admin_pw),
-            "name": "Admin B&B", 
-            "role": "admin",
+            "email": admin_email, "password_hash": hash_password(admin_pw),
+            "name": "Admin B&B", "role": "admin",
             "created_at": datetime.now(timezone.utc).isoformat()
         })
-        logger.info(f"Seeded primo admin del database: {admin_email}")
-    else:
-        logger.info("Un amministratore è già presente nel database. Salto il seeding iniziale.")
+        logger.info(f"Seeded admin: {admin_email}")
+    elif not verify_password(admin_pw, existing["password_hash"]):
+        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_pw)}})
     
     yield
     logger.info("Chiusura dell'applicazione: disconnessione da MongoDB...")
     client.close()
 
 app = FastAPI(title="B&B Manager", lifespan=lifespan)
-
-# --------------------- Configurazione CORS Dinamica ---------------------
-frontend_url_env = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
-allowed_origins = [frontend_url_env, "http://localhost:3000"]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=[
+        "https://gestionale-bandb.netlify.app",
+        "http://localhost:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -139,7 +135,7 @@ async def get_current_user(request: Request) -> dict:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-# --------------------- Models Pydantic ---------------------
+# --------------------- Models ---------------------
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str
@@ -538,8 +534,11 @@ def format_alloggiati_record(b: dict) -> Optional[str]:
         nome = (b.get("guest_first_name") or "").upper().ljust(30)[:30]
         sesso = (b.get("sex") or "M").ljust(1)[:1]
         dob = b.get("date_of_birth", "1980-01-01")
-        dob_d = datetime.fromisoformat(dob).date()
-        dob_str = f"{dob_d.day:02d}/{dob_d.month:02d}/{dob_d.year}"
+        try:
+            dob_d = datetime.fromisoformat(dob).date()
+            dob_str = f"{dob_d.day:02d}/{dob_d.month:02d}/{dob_d.year}"
+        except Exception:
+            dob_str = "01/01/1980"
         comune_nascita = (b.get("place_of_birth") or "").upper().ljust(9)[:9]
         provincia = "  "
         stato_nascita = (b.get("country_of_birth") or "ITALIA").upper().ljust(9)[:9]
@@ -549,37 +548,59 @@ def format_alloggiati_record(b: dict) -> Optional[str]:
         doc_luogo = (b.get("document_place") or "").upper().ljust(9)[:9]
         arrivo = f"{ci.day:02d}/{ci.month:02d}/{ci.year}"
         return f"{tipo}{arrivo}{nights}{cognome}{nome}{sesso}{dob_str}{comune_nascita}{provincia}{stato_nascita}{cittadinanza}{doc_tipo}{doc_num}{doc_luogo}"
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Skip record: {e}")
         return None
 
 @api.get("/alloggiati/export", response_class=PlainTextResponse)
 async def alloggiati_export(start_date: str, end_date: str, user: dict = Depends(get_current_user)):
-    bookings = await db.bookings.find({"owner_id": user["id"], "checkin": {"$gte": start_date, "$lte": end_date}}).to_list(1000)
+    bookings = await db.bookings.find({
+        "owner_id": user["id"],
+        "checkin": {"$gte": start_date, "$lte": end_date}
+    }).to_list(1000)
     lines = [l for b in bookings if (l := format_alloggiati_record(b))]
-    return PlainTextResponse("\r\n".join(lines), headers={"Content-Disposition": f'attachment; filename="alloggiati.txt"'})
+    return PlainTextResponse("\r\n".join(lines), headers={"Content-Disposition": f'attachment; filename="alloggiati_{start_date}_{end_date}.txt"'})
 
 @api.get("/alloggiati/export-zip")
 async def alloggiati_export_zip(start_date: str, end_date: str, user: dict = Depends(get_current_user)):
-    bookings = await db.bookings.find({"owner_id": user["id"], "checkin": {"$gte": start_date, "$lte": end_date}}).to_list(1000)
+    bookings = await db.bookings.find({
+        "owner_id": user["id"],
+        "checkin": {"$gte": start_date, "$lte": end_date}
+    }).to_list(1000)
     lines = [l for b in bookings if (l := format_alloggiati_record(b))]
+    photo_files = []
+    for b in bookings:
+        safe_name = f"{(b.get('guest_last_name') or 'X').upper()}_{(b.get('guest_first_name') or 'X').upper()}".replace(" ", "_")
+        for i, p in enumerate(b.get("photo_paths", []) or []):
+            fpath = UPLOAD_DIR / p
+            if fpath.exists():
+                ext = fpath.suffix or ".jpg"
+                arc = f"foto_documenti/{safe_name}_{i + 1}{ext}"
+                photo_files.append((arc, str(fpath)))
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("alloggiati.txt", "\r\n".join(lines))
+        zf.writestr(f"alloggiati_{start_date}_{end_date}.txt", "\r\n".join(lines))
+        for arc, fpath in photo_files:
+            zf.write(fpath, arc)
+        zf.writestr("LEGGIMI.txt",
+                    "Carica il file .txt sul portale Alloggiati Web della Polizia di Stato.\r\n"
+                    "La cartella foto_documenti contiene le foto dei documenti per il tuo archivio interno.")
     buf.seek(0)
-    return StreamingResponse(buf, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="alloggiati.zip"'})
+    return StreamingResponse(buf, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="alloggiati_{start_date}_{end_date}.zip"'})
 
 @api.get("/uploads/{filename}")
 async def get_upload(filename: str, user: dict = Depends(get_current_user)):
     fpath = UPLOAD_DIR / filename
-    if not fpath.exists() or ".." in filename:
+    if not fpath.exists() or ".." in filename or "/" in filename:
         raise HTTPException(404, "File non trovato")
     return FileResponse(str(fpath))
 
-# --------------------- Public Guest Form ---------------------
-ADMIN_EMAIL_ENV = os.environ.get("ADMIN_EMAIL", "admin@example.com")
-
+# --------------------- Public Guest Registration ---------------------
 @api.get("/public/property-info")
 async def public_property_info():
+    admin = await db.users.find_one({"email": "giuseppesica01@gmail.com"})
+    if not admin:
+        raise HTTPException(404, "Struttura non configurata")
     return {"name": "Casa B&B", "active": True}
 
 @api.post("/public/registration")
@@ -588,16 +609,23 @@ async def public_registration(
     checkin: str = Form(...), checkout: str = Form(...), channel: str = Form("Direct"),
     document_number: str = Form(...), date_of_birth: str = Form(...), place_of_birth: str = Form(...),
     country_of_birth: str = Form("ITALIA"), citizenship: str = Form("ITALIA"), sex: str = Form("M"),
-    document_type: str = Form("IDENT"), document_place: str = Form(""), photos: List[UploadFile] = File(default=[])
+    document_type: str = Form("IDENT"), document_place: str = Form(""), photos: List[UploadFile] = File(default=[]),
 ):
-    proprietario = await db.users.find_one({"email": ADMIN_EMAIL_ENV})
-    if not proprietario: raise HTTPException(400, "Configurazione mancante")
-    
+    proprietario = await db.users.find_one({"email": "giuseppesica01@gmail.com"})
+    if not proprietario:
+        raise HTTPException(400, "Struttura non configurata")
+    owner_id = str(proprietario["_id"])
+
     photo_paths = []
     for f in photos or []:
         if not f.filename: continue
-        safe = f"doc_{uuid.uuid4().hex}{Path(f.filename).suffix.lower()}"
-        (UPLOAD_DIR / safe).write_bytes(await f.read())
+        ext = Path(f.filename).suffix.lower() or ".jpg"
+        if ext not in [".jpg", ".jpeg", ".png", ".webp", ".pdf", ".heic"]: continue
+        safe = f"doc_{uuid.uuid4().hex}{ext}"
+        content = await f.read()
+        if len(content) > 15 * 1024 * 1024:
+            raise HTTPException(400, f"File {f.filename} troppo grande (max 15MB)")
+        (UPLOAD_DIR / safe).write_bytes(content)
         photo_paths.append(safe)
 
     nights = nights_between(checkin, checkout)
@@ -607,16 +635,24 @@ async def public_registration(
         "date_of_birth": date_of_birth, "place_of_birth": place_of_birth.strip(),
         "country_of_birth": country_of_birth, "citizenship": citizenship, "sex": sex,
         "document_type": document_type, "document_number": document_number, "document_place": document_place,
-        "nights": nights, "net_revenue": 0.0, "owner_id": str(proprietario["_id"]), "photo_paths": photo_paths,
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "nights": nights, "net_revenue": 0.0, "owner_id": owner_id, "photo_paths": photo_paths,
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.bookings.insert_one(doc)
-    return {"ok": True}
+    result = await db.bookings.insert_one(doc)
+    return {"ok": True, "id": str(result.inserted_id), "photos_uploaded": len(photo_paths)}
 
 @api.get("/alloggiati/preview")
 async def alloggiati_preview(start_date: str, end_date: str, user: dict = Depends(get_current_user)):
     bookings = await db.bookings.find({"owner_id": user["id"], "checkin": {"$gte": start_date, "$lte": end_date}}).to_list(1000)
-    records = [{"guest": f"{b.get('guest_first_name')} {b.get('guest_last_name')}", "valid": format_alloggiati_record(b) is not None} for b in bookings]
+    records = []
+    for b in bookings:
+        line = format_alloggiati_record(b)
+        records.append({
+            "guest": f"{b.get('guest_first_name', '')} {b.get('guest_last_name', '')}",
+            "checkin": b.get("checkin"), "nights": b.get("nights"), "valid": line is not None,
+            "line_preview": line[:80] + "..." if line and len(line) > 80 else line,
+            "missing": [k for k in ["date_of_birth", "place_of_birth", "document_number"] if not b.get(k)],
+        })
     return {"total": len(bookings), "records": records}
 
 # --------------------- ROSS 1000 Lazio (ISTAT) ---------------------
@@ -628,13 +664,20 @@ class Ross1000Settings(BaseModel):
 @api.get("/ross1000/settings")
 async def get_ross_settings(user: dict = Depends(get_current_user)):
     doc = await db.settings.find_one({"owner_id": user["id"], "kind": "ross1000"})
-    if not doc: return {"codice_struttura": "", "camere_disponibili": 1, "letti_disponibili": 2}
-    return {"codice_struttura": doc.get("codice_struttura"), "camere_disponibili": doc.get("camere_disponibili"), "letti_disponibili": doc.get("letti_disponibili")}
+    if not doc:
+        return {"codice_struttura": "", "camere_disponibili": 1, "letti_disponibili": 2}
+    return {"codice_struttura": doc.get("codice_struttura", ""), "camere_disponibili": doc.get("camere_disponibili", 1), "letti_disponibili": doc.get("letti_disponibili", 2)}
 
 @api.post("/ross1000/settings")
 async def save_ross_settings(payload: Ross1000Settings, user: dict = Depends(get_current_user)):
-    await db.settings.update_one({"owner_id": user["id"], "kind": "ross1000"}, {"$set": {**payload.model_dump(), "owner_id": user["id"], "kind": "ross1000"}}, upsert=True)
+    await db.settings.update_one({"owner_id": user["id"], "kind": "ross1000"}, {"$set": {**payload.model_dump(), "owner_id": user["id"], "kind": "ross1000", "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
     return {"ok": True}
+
+async def _load_ross_settings(user_id: str) -> dict:
+    doc = await db.settings.find_one({"owner_id": user_id, "kind": "ross1000"})
+    if not doc or not doc.get("codice_struttura"):
+        raise HTTPException(400, "Configura prima il codice struttura in Impostazioni ROSS 1000.")
+    return doc
 
 async def _month_bookings(user_id: str, year: int, month: int) -> list:
     _, last_day = __import__("calendar").monthrange(year, month)
@@ -642,15 +685,17 @@ async def _month_bookings(user_id: str, year: int, month: int) -> list:
 
 @api.get("/ross1000/preview")
 async def ross_preview(year: int, month: int, user: dict = Depends(get_current_user)):
-    settings = await db.settings.find_one({"owner_id": user["id"], "kind": "ross1000"})
+    settings = await _load_ross_settings(user["id"])
     bookings = await _month_bookings(user["id"], year, month)
-    return compute_month_stats(year, month, bookings, settings.get("camere_disponibili", 1) if settings else 1)
+    stats = compute_month_stats(year, month, bookings, settings["camere_disponibili"])
+    stats["codice_struttura"] = settings["codice_struttura"]
+    return stats
 
 @api.get("/ross1000/export-xml", response_class=PlainTextResponse)
 async def ross_export_xml(year: int, month: int, user: dict = Depends(get_current_user)):
-    settings = await db.settings.find_one({"owner_id": user["id"], "kind": "ross1000"})
+    settings = await _load_ross_settings(user["id"])
     bookings = await _month_bookings(user["id"], year, month)
-    xml = build_movimenti_xml(settings.get("codice_struttura"), year, month, bookings, settings.get("camere_disponibili", 1), settings.get("letti_disponibili", 2))
-    return PlainTextResponse(xml, media_type="application/xml")
+    xml = build_movimenti_xml(codice_struttura=settings["codice_struttura"], year=year, month=month, bookings=bookings, camere_disponibili=settings["camere_disponibili"], letti_disponibili=settings["letti_disponibili"])
+    return PlainTextResponse(xml, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="ross1000_{year}_{month:02d}.xml"'})
 
 app.include_router(api)
