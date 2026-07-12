@@ -444,6 +444,7 @@ async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --------------------- Pricing AI (Fix URL Adapter Definitivo) ---------------------
+# --------------------- Pricing AI (Fix Radicale Blindato) ---------------------
 @api.post("/pricing/suggest")
 async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_current_user)):
     checkin = payload.checkin
@@ -451,41 +452,38 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
     nights = nights_between(checkin, checkout)
     
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    gemini_key = gemini_key.replace("[", "").replace("]", "").replace("'", "").replace('"', "").strip()
-    
-    if not gemini_key:
+    # Rimuoviamo qualsiasi residuo strano di parentesi o link accumulato nella chiave
+    for c in ["[", "]", "(", ")", "'", '"', " "]:
+        gemini_key = gemini_key.replace(c, "")
+        
+    if "http" in gemini_key or not gemini_key:
         suggested = payload.base_price
         return {
             "suggested_price": suggested, "min_price": round(suggested * 0.8, 2),
             "max_price": round(suggested * 1.4, 2), "nights": nights,
             "total_suggested": round(suggested * nights, 2),
-            "reasoning": "Configura la variabile d'ambiente GEMINI_API_KEY su Render."
+            "reasoning": "Configura o ripulisci la chiave GEMINI_API_KEY su Render."
         }
 
-    prompt = f"""
-    Sei un assistente virtuale esperto di Revenue Management per strutture ricettive situato in: {payload.location}.
-    Calcola la tariffa ottimale basandoti su:
-    - Prezzo base dell'host: {payload.base_price}€ a notte
-    - Notti: {nights}
-    - Contesto occupazione: {payload.occupancy_context or 'Nessuna specifica'}
-    - Eventi: {payload.events or 'Nessuno'}
+    # Prompt ultra-pulito senza menzioni a modelli, url o documentazione
+    prompt = (
+        f"Sei un esperto di tariffe hotel a {payload.location}. "
+        f"Calcola il prezzo ideale a notte sapendo che il prezzo base e {payload.base_price} euro, "
+        f"le notti sono {nights}, il contesto di occupazione e '{payload.occupancy_context or 'normale'}' "
+        f"e gli eventi in zona sono '{payload.events or 'nessuno'}'. "
+        f"Rispondi solo con un oggetto JSON valido contenente le chiavi "
+        f"suggested_price (numero), min_price (numero), max_price (numero) e "
+        f"reasoning (stringa di spiegazione breve in italiano)."
+    )
     
-    Restituisci la risposta esclusivamente in formato JSON valido, senza blocchi di codice markdown (no ```json). Il JSON deve contenere queste esatte chiavi:
-    {{
-      "suggested_price": numero,
-      "min_price": numero,
-      "max_price": numero,
-      "reasoning": "spiegazione commerciale in italiano di massimo 3 frasi"
-    }}
-    """
     try:
-        base_url = "[https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent](https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent)"
-        url = f"{base_url}?key={gemini_key}"
+        # Costruzione URL atomica
+        url = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=" + str(gemini_key)
         
         headers = {"Content-Type": "application/json"}
         data = {
             "contents": [{
-                "parts": [{"text": prompt}]
+                "parts": [{"text": str(prompt)}]
             }]
         }
         
@@ -523,7 +521,6 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
             "total_suggested": round(suggested * nights, 2),
             "reasoning": f"Servizio IA momentaneamente non disponibile. (Dettaglio: {str(e)[:40]})"
         }
-
 # --------------------- Alloggiati Web Export ---------------------
 def format_alloggiati_record(b: dict) -> Optional[str]:
     try:
