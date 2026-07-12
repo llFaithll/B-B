@@ -1,258 +1,248 @@
-B4='/ross1000/settings'
-B3='Struttura non configurata'
-B2='photo_paths'
-B1='document_place'
-B0='document_type'
-A_='citizenship'
-Az='country_of_birth'
-Ay='/expenses/{eid}'
-Ax='Spesa non trovata'
-Aw='/expenses'
-Av='/inventory/{iid}'
-Au='Prodotto non trovato'
-At='/inventory'
-As='/bookings/{bid}'
-Ar='Prenotazione non trovata'
-Aq='/bookings'
-Ap='monthly'
-Ao='User not found'
-An='refresh'
-Am='access'
-Al='ADMIN_EMAIL'
-Ak='due_date'
-Aj='http://localhost:3000'
-AU='.jpg'
-AT='Content-Disposition'
-AS='$gte'
-AR='document_number'
-AQ='place_of_birth'
-AP='date_of_birth'
-AO='updated_at'
-AN='checkout'
-AM='user'
-AL='Other'
-AK='Booking'
-AJ='Invalid token'
-AI='refresh_token'
-AH='none'
-AA='letti_disponibili'
-A9='ross1000'
-A8='kind'
-A7='$lte'
-A6='channel'
-A5='$set'
-A4='external_id'
-A3='IDENT'
-A2='Airbnb'
-A1='access_token'
-A0='type'
-z='sub'
-y='password_hash'
-x=Exception
-q='camere_disponibili'
-p='guest_last_name'
-o='guest_first_name'
-n=sum
-l='gross_price'
-k='net_revenue'
-j='M'
-i='created_at'
-h='role'
-g=len
-f='codice_struttura'
-e='Direct'
-d='name'
-b='/'
-Z='ITALIA'
-W='ok'
-V=float
-T='nights'
-S='email'
-R=None
-P='checkin'
-L='_id'
-K=round
-J=''
-I=True
-E='owner_id'
-C='id'
-A=str
-from dotenv import load_dotenv as B5
+_AG='/ross1000/settings'
+_AF='Struttura non configurata'
+_AE='photo_paths'
+_AD='document_place'
+_AC='document_type'
+_AB='citizenship'
+_AA='country_of_birth'
+_A9='/expenses/{eid}'
+_A8='Spesa non trovata'
+_A7='/expenses'
+_A6='/inventory/{iid}'
+_A5='Prodotto non trovato'
+_A4='/inventory'
+_A3='/bookings/{bid}'
+_A2='Prenotazione non trovata'
+_A1='/bookings'
+_A0='User not found'
+_z='access'
+_y='ADMIN_EMAIL'
+_x='due_date'
+_w='http://localhost:3000'
+_v='.jpg'
+_u='Content-Disposition'
+_t='$gte'
+_s='document_number'
+_r='place_of_birth'
+_q='date_of_birth'
+_p='updated_at'
+_o='checkout'
+_n='user'
+_m='Other'
+_l='Booking'
+_k='Invalid token'
+_j='refresh_token'
+_i='none'
+_h='letti_disponibili'
+_g='ross1000'
+_f='kind'
+_e='$lte'
+_d='channel'
+_c='$set'
+_b='external_id'
+_a='IDENT'
+_Z='Airbnb'
+_Y='access_token'
+_X='type'
+_W='sub'
+_V='password_hash'
+_U='camere_disponibili'
+_T='guest_last_name'
+_S='guest_first_name'
+_R='gross_price'
+_Q='net_revenue'
+_P='created_at'
+_O='role'
+_N='codice_struttura'
+_M='Direct'
+_L='name'
+_K='/'
+_J='ITALIA'
+_I='ok'
+_H='nights'
+_G='email'
+_F=None
+_E='checkin'
+_D='_id'
+_C=True
+_B='owner_id'
+_A='id'
+from dotenv import load_dotenv
 from pathlib import Path
-from contextlib import asynccontextmanager as B6
-AV=Path(__file__).parent
-B5(AV/'.env')
-import os as X,logging as AB,uuid,bcrypt as AC,jwt as a,secrets,requests as AW,json
-from datetime import datetime as M,timezone as Q,timedelta as AX,date as AD
-from typing import List,Optional as N,Literal as r,Annotated as B7
+from contextlib import asynccontextmanager
+ROOT_DIR=Path(__file__).parent
+load_dotenv(ROOT_DIR/'.env')
+import os,logging,uuid,bcrypt,jwt,secrets,requests,json
+from datetime import datetime,timezone,timedelta,date
+from typing import List,Optional,Literal,Annotated
 from io import BytesIO
-from fastapi import FastAPI,APIRouter as B8,HTTPException as H,Request,Response,Depends as F,UploadFile,File,Form as O
-from fastapi.responses import PlainTextResponse as s,StreamingResponse as B9,FileResponse as BA
-import zipfile as AY,mimetypes
-from starlette.middleware.cors import CORSMiddleware as BB
-from motor.motor_asyncio import AsyncIOMotorClient as BC
-from bson import ObjectId as U
-from pydantic import BaseModel as Y,Field,EmailStr as AZ,BeforeValidator as BD,ConfigDict
-from icalendar import Calendar as BE
-from ross1000 import build_movimenti_xml as BF,compute_month_stats as BG
-t='HS256'
-u=X.environ['JWT_SECRET']
-BM=X.environ.get('FRONTEND_URL',Aj).rstrip(b)
-BN=X.environ.get('EMERGENT_LLM_KEY','PROVA')
-v=AV/'uploads'
-v.mkdir(exist_ok=I)
-BH=X.environ['MONGO_URL']
-Aa=BC(BH)
-B=Aa.get_default_database(default='gestionale')
-AB.basicConfig(level=AB.INFO,format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-c=AB.getLogger(__name__)
-@B6
-async def BI(app):
-	C='admin';c.info("Avvio dell'applicazione: configurazione indici MongoDB...");await B.users.create_index(S,unique=I);await B.bookings.create_index([(E,1),(P,-1)]);await B.inventory.create_index([(E,1)]);await B.expenses.create_index([(E,1),(Ak,1)]);A=X.environ.get(Al,'admin@bnb.it').lower();D=X.environ.get('ADMIN_PASSWORD','admin123');F=await B.users.find_one({h:C})
-	if not F:await B.users.insert_one({S:A,y:Ac(D),d:'Admin B&B',h:C,i:M.now(Q.utc).isoformat()});c.info(f"Seeded primo admin del database: {A}")
-	else:c.info('Un amministratore è già presente nel database. Salto il seeding iniziale.')
-	yield;c.info("Chiusura dell'applicazione: disconnessione da MongoDB...");Aa.close()
-Ab=FastAPI(title='B&B Manager',lifespan=BI)
-Ab.add_middleware(BB,allow_origins=['https://gestionale-bandb.netlify.app',Aj],allow_credentials=I,allow_methods=['*'],allow_headers=['*'])
-D=B8(prefix='/api')
-def BJ(v):
-	if isinstance(v,U):return A(v)
+from fastapi import FastAPI,APIRouter,HTTPException,Request,Response,Depends,UploadFile,File,Form
+from fastapi.responses import PlainTextResponse,StreamingResponse,FileResponse
+import zipfile,mimetypes
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
+from pydantic import BaseModel,Field,EmailStr,BeforeValidator,ConfigDict
+from icalendar import Calendar
+from ross1000 import build_movimenti_xml,compute_month_stats
+JWT_ALGORITHM='HS256'
+JWT_SECRET=os.environ['JWT_SECRET']
+FRONTEND_URL=os.environ.get('FRONTEND_URL',_w).rstrip(_K)
+EMERGENT_LLM_KEY=os.environ.get('EMERGENT_LLM_KEY','PROVA')
+UPLOAD_DIR=ROOT_DIR/'uploads'
+UPLOAD_DIR.mkdir(exist_ok=_C)
+mongo_url=os.environ['MONGO_URL']
+client=AsyncIOMotorClient(mongo_url)
+db=client.get_default_database(default='gestionale')
+logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger=logging.getLogger(__name__)
+@asynccontextmanager
+async def lifespan(app):
+	A='admin';logger.info("Avvio dell'applicazione: configurazione indici MongoDB...");await db.users.create_index(_G,unique=_C);await db.bookings.create_index([(_B,1),(_E,-1)]);await db.inventory.create_index([(_B,1)]);await db.expenses.create_index([(_B,1),(_x,1)]);admin_email=os.environ.get(_y,'admin@bnb.it').lower();admin_pw=os.environ.get('ADMIN_PASSWORD','admin123');any_admin=await db.users.find_one({_O:A})
+	if not any_admin:await db.users.insert_one({_G:admin_email,_V:hash_password(admin_pw),_L:'Admin B&B',_O:A,_P:datetime.now(timezone.utc).isoformat()});logger.info(f"Seeded primo admin del database: {admin_email}")
+	else:logger.info('Un amministratore è già presente nel database. Salto il seeding iniziale.')
+	yield;logger.info("Chiusura dell'applicazione: disconnessione da MongoDB...");client.close()
+app=FastAPI(title='B&B Manager',lifespan=lifespan)
+app.add_middleware(CORSMiddleware,allow_origins=['https://gestionale-bandb.netlify.app',_w],allow_credentials=_C,allow_methods=['*'],allow_headers=['*'])
+api=APIRouter(prefix='/api')
+def obj_to_str(v):
+	if isinstance(v,ObjectId):return str(v)
 	return v
-BO=B7[A,BD(BJ)]
-def Ac(pw):return AC.hashpw(pw.encode(),AC.gensalt()).decode()
-def BK(pw,hashed):return AC.checkpw(pw.encode(),hashed.encode())
-def AE(user_id,email):A={z:user_id,S:email,A0:Am,'exp':M.now(Q.utc)+AX(minutes=1440)};return a.encode(A,u,algorithm=t)
-def Ad(user_id):A={z:user_id,A0:An,'exp':M.now(Q.utc)+AX(days=7)};return a.encode(A,u,algorithm=t)
-def Ae(response,access,refresh):A=response;A.set_cookie(A1,access,httponly=I,secure=I,samesite=AH,max_age=86400,path=b);A.set_cookie(AI,refresh,httponly=I,secure=I,samesite=AH,max_age=604800,path=b)
-async def G(request):
-	F=request;E=F.cookies.get(A1)
-	if not E:
-		G=F.headers.get('Authorization',J)
-		if G.startswith('Bearer '):E=G[7:]
-	if not E:raise H(status_code=401,detail='Not authenticated')
+PyObjectId=Annotated[str,BeforeValidator(obj_to_str)]
+def hash_password(pw):return bcrypt.hashpw(pw.encode(),bcrypt.gensalt()).decode()
+def verify_password(pw,hashed):return bcrypt.checkpw(pw.encode(),hashed.encode())
+def create_access_token(user_id,email):payload={_W:user_id,_G:email,_X:_z,'exp':datetime.now(timezone.utc)+timedelta(minutes=1440)};return jwt.encode(payload,JWT_SECRET,algorithm=JWT_ALGORITHM)
+def create_refresh_token(user_id):payload={_W:user_id,_X:'refresh','exp':datetime.now(timezone.utc)+timedelta(days=7)};return jwt.encode(payload,JWT_SECRET,algorithm=JWT_ALGORITHM)
+def set_auth_cookies(response,access,refresh):response.set_cookie(_Y,access,httponly=_C,secure=_C,samesite=_i,max_age=86400,path=_K);response.set_cookie(_j,refresh,httponly=_C,secure=_C,samesite=_i,max_age=604800,path=_K)
+async def get_current_user(request):
+	token=request.cookies.get(_Y)
+	if not token:
+		auth_header=request.headers.get('Authorization','')
+		if auth_header.startswith('Bearer '):token=auth_header[7:]
+	if not token:raise HTTPException(status_code=401,detail='Not authenticated')
 	try:
-		I=a.decode(E,u,algorithms=[t])
-		if I.get(A0)!=Am:raise H(status_code=401,detail='Invalid token type')
-		D=await B.users.find_one({L:U(I[z])})
-		if not D:raise H(status_code=401,detail=Ao)
-		D[C]=A(D[L]);D.pop(L,R);D.pop(y,R);return D
-	except a.ExpiredSignatureError:raise H(status_code=401,detail='Token expired')
-	except a.InvalidTokenError:raise H(status_code=401,detail=AJ)
-class BP(Y):email:AZ;password:A;name:A
-class BQ(Y):email:AZ;password:A
-class BR(Y):guest_first_name:A;guest_last_name:A;checkin:A;checkout:A;gross_price:V;channel:r[A2,AK,e,AL]=e;notes:N[A]=J;date_of_birth:N[A]=R;place_of_birth:N[A]=R;country_of_birth:N[A]=Z;citizenship:N[A]=Z;sex:N[r[j,'F']]=j;document_type:N[A]=A3;document_number:N[A]=R;document_place:N[A]=R;guest_type:N[A]='16'
-class BS(Y):name:A;category:N[A]='Generale';quantity:V;unit:N[A]='pz';min_threshold:V=0;price_per_unit:N[V]=0
-class BT(Y):name:A;category:A;amount:V;due_date:A;recurrence:r['once',Ap,'quarterly','yearly']='once';paid:bool=False;notes:N[A]=J
-class BU(Y):url:A;channel:r[A2,AK,e,AL]=A2;default_price:V=8e1
-class BV(Y):checkin:A;checkout:A;location:A='Italia';base_price:V=8e1;events:N[A]=J;occupancy_context:N[A]=J
-Af={A2:.03,AK:.15,e:.0,AL:.1}
-BL=.21
-def AF(gross,channel):A=Af.get(channel,.1);B=gross*(1-A);C=B*(1-BL);return K(C,2)
-def m(checkin,checkout):A=M.fromisoformat(checkin).date();B=M.fromisoformat(checkout).date();return max((B-A).days,0)
-def w(doc):B=doc;B[C]=A(B.pop(L));return B
-@D.post('/auth/register')
-async def BW(payload,response):
-	D=payload;E=D.email.lower()
-	if await B.users.find_one({S:E}):raise H(status_code=400,detail='Email già registrata')
-	G={S:E,y:Ac(D.password),d:D.name,h:AM,i:M.now(Q.utc).isoformat()};I=await B.users.insert_one(G);F=A(I.inserted_id);Ae(response,AE(F,E),Ad(F));return{C:F,S:E,d:D.name,h:AM}
-@D.post('/auth/login')
-async def BX(payload,response):
-	G=payload;E=G.email.lower();D=await B.users.find_one({S:E})
-	if not D or not BK(G.password,D[y]):raise H(status_code=401,detail='Credenziali non valide')
-	F=A(D[L]);Ae(response,AE(F,E),Ad(F));return{C:F,S:E,d:D.get(d),h:D.get(h,AM)}
-@D.post('/auth/logout')
-async def BY(response):A=response;A.delete_cookie(A1,path=b);A.delete_cookie(AI,path=b);return{W:I}
-@D.get('/auth/me')
-async def BZ(user=F(G)):return user
-@D.post('/auth/refresh')
-async def Ba(request,response):
-	D=request.cookies.get(AI)
-	if not D:raise H(status_code=401,detail='No refresh token')
+		payload=jwt.decode(token,JWT_SECRET,algorithms=[JWT_ALGORITHM])
+		if payload.get(_X)!=_z:raise HTTPException(status_code=401,detail='Invalid token type')
+		user=await db.users.find_one({_D:ObjectId(payload[_W])})
+		if not user:raise HTTPException(status_code=401,detail=_A0)
+		user[_A]=str(user[_D]);user.pop(_D,_F);user.pop(_V,_F);return user
+	except jwt.ExpiredSignatureError:raise HTTPException(status_code=401,detail='Token expired')
+	except jwt.InvalidTokenError:raise HTTPException(status_code=401,detail=_k)
+class RegisterIn(BaseModel):email:EmailStr;password:str;name:str
+class LoginIn(BaseModel):email:EmailStr;password:str
+class BookingIn(BaseModel):guest_first_name:str;guest_last_name:str;checkin:str;checkout:str;gross_price:float;channel:Literal[_Z,_l,_M,_m]=_M;notes:Optional[str]='';date_of_birth:Optional[str]=_F;place_of_birth:Optional[str]=_F;country_of_birth:Optional[str]=_J;citizenship:Optional[str]=_J;sex:Optional[Literal['M','F']]='M';document_type:Optional[str]=_a;document_number:Optional[str]=_F;document_place:Optional[str]=_F;guest_type:Optional[str]='16'
+class InventoryIn(BaseModel):name:str;category:Optional[str]='Generale';quantity:float;unit:Optional[str]='pz';min_threshold:float=0;price_per_unit:Optional[float]=0
+class ExpenseIn(BaseModel):name:str;category:str;amount:float;due_date:str;recurrence:Literal['once','monthly','quarterly','yearly']='once';paid:bool=False;notes:Optional[str]=''
+class ICalImportIn(BaseModel):url:str;channel:Literal[_Z,_l,_M,_m]=_Z;default_price:float=8e1
+class PricingSuggestIn(BaseModel):checkin:str;checkout:str;location:str='Italia';base_price:float=8e1;events:Optional[str]='';occupancy_context:Optional[str]=''
+CHANNEL_COMMISSION={_Z:.03,_l:.15,_M:.0,_m:.1}
+CEDOLARE_SECCA_RATE=.21
+def compute_net(gross,channel):commission=CHANNEL_COMMISSION.get(channel,.1);after_commission=gross*(1-commission);after_tax=after_commission*(1-CEDOLARE_SECCA_RATE);return round(after_tax,2)
+def nights_between(checkin,checkout):ci=datetime.fromisoformat(checkin).date();co=datetime.fromisoformat(checkout).date();return max((co-ci).days,0)
+def serialize_booking(doc):doc[_A]=str(doc.pop(_D));return doc
+@api.post('/auth/register')
+async def register(payload,response):
+	email=payload.email.lower()
+	if await db.users.find_one({_G:email}):raise HTTPException(status_code=400,detail='Email già registrata')
+	doc={_G:email,_V:hash_password(payload.password),_L:payload.name,_O:_n,_P:datetime.now(timezone.utc).isoformat()};result=await db.users.insert_one(doc);uid=str(result.inserted_id);set_auth_cookies(response,create_access_token(uid,email),create_refresh_token(uid));return{_A:uid,_G:email,_L:payload.name,_O:_n}
+@api.post('/auth/login')
+async def login(payload,response):
+	email=payload.email.lower();user=await db.users.find_one({_G:email})
+	if not user or not verify_password(payload.password,user[_V]):raise HTTPException(status_code=401,detail='Credenziali non valide')
+	uid=str(user[_D]);set_auth_cookies(response,create_access_token(uid,email),create_refresh_token(uid));return{_A:uid,_G:email,_L:user.get(_L),_O:user.get(_O,_n)}
+@api.post('/auth/logout')
+async def logout(response):response.delete_cookie(_Y,path=_K);response.delete_cookie(_j,path=_K);return{_I:_C}
+@api.get('/auth/me')
+async def me(user=Depends(get_current_user)):return user
+@api.post('/auth/refresh')
+async def refresh(request,response):
+	token=request.cookies.get(_j)
+	if not token:raise HTTPException(status_code=401,detail='No refresh token')
 	try:
-		E=a.decode(D,u,algorithms=[t])
-		if E.get(A0)!=An:raise H(status_code=401,detail=AJ)
-		C=await B.users.find_one({L:U(E[z])})
-		if not C:raise H(status_code=401,detail=Ao)
-		F=AE(A(C[L]),C[S]);response.set_cookie(A1,F,httponly=I,secure=I,samesite=AH,max_age=86400,path=b);return{W:I}
-	except a.InvalidTokenError:raise H(status_code=401,detail=AJ)
-@D.post(Aq)
-async def Bb(payload,user=F(G)):D=payload;G=m(D.checkin,D.checkout);H=AF(D.gross_price,D.channel);F=D.model_dump();F.update({T:G,k:H,E:user[C],A4:R,i:M.now(Q.utc).isoformat()});I=await B.bookings.insert_one(F);F[C]=A(I.inserted_id);F.pop(L,R);return F
-@D.get(Aq)
-async def Bc(user=F(G)):A=await B.bookings.find({E:user[C]}).sort(P,-1).to_list(2000);return[w(A)for A in A]
-@D.put(As)
-async def Bd(bid,payload,user=F(G)):
-	A=payload;F=m(A.checkin,A.checkout);G=AF(A.gross_price,A.channel);D=A.model_dump();D.update({T:F,k:G});I=await B.bookings.update_one({L:U(bid),E:user[C]},{A5:D})
-	if I.matched_count==0:raise H(404,Ar)
-	J=await B.bookings.find_one({L:U(bid)});return w(J)
-@D.delete(As)
-async def Be(bid,user=F(G)):
-	A=await B.bookings.delete_one({L:U(bid),E:user[C]})
-	if A.deleted_count==0:raise H(404,Ar)
-	return{W:I}
-@D.post('/bookings/ical-import')
-async def Bf(payload,user=F(G)):
-	W='isoformat';F=payload
-	try:L=AW.get(F.url,timeout=15);L.raise_for_status();X=BE.from_ical(L.content)
-	except x as Y:raise H(400,f"Impossibile leggere iCal: {Y}")
-	N=0;O=0
-	for D in X.walk():
-		if D.name!='VEVENT':continue
-		G=A(D.get('UID',J))
-		if not G:continue
-		if await B.bookings.find_one({A4:G,E:user[C]}):O+=1;continue
-		I=D.get('DTSTART').dt;K=D.get('DTEND').dt;R=I.isoformat()if hasattr(I,W)else A(I);S=K.isoformat()if hasattr(K,W)else A(K);Z=A(D.get('SUMMARY','Ospite iCal'));U=m(R,S);V=F.default_price*max(U,1);a={o:Z[:40],p:'(iCal)',P:R,AN:S,l:V,A6:F.channel,'notes':A(D.get('DESCRIPTION',J)),T:U,k:AF(V,F.channel),E:user[C],A4:G,i:M.now(Q.utc).isoformat()};await B.bookings.insert_one(a);N+=1
-	return{'imported':N,'skipped':O}
-@D.get('/dashboard/stats')
-async def Bg(user=F(G)):
-	R='revenue';F=await B.bookings.find({E:user[C]}).to_list(5000);I=M.now(Q.utc).date();S=AD(I.year,1,1);U=n(A.get(l,0)for A in F);V=n(A.get(k,0)for A in F);A=[A for A in F if A.get(P,J)>=S.isoformat()];W=n(A.get(l,0)for A in A);X=n(A.get(k,0)for A in A);Y=n(A.get(T,0)for A in A);L=366 if I.year%4==0 else 365;Z=K(Y/L*100,1)if L else 0;G={}
-	for D in A:N=D.get(A6,e);G[N]=G.get(N,0)+D.get(l,0)
-	H={}
-	for D in A:O=D.get(P,J)[:7];H[O]=H.get(O,0)+D.get(l,0)
-	a=[{'month':A,R:K(B,2)}for(A,B)in sorted(H.items())];b=[{A6:A,R:K(B,2)}for(A,B)in G.items()];return{'total_gross':K(U,2),'total_net':K(V,2),'year_gross':K(W,2),'year_net':K(X,2),'occupancy_pct':Z,'total_bookings':g(F),'year_bookings':g(A),'channels':b,Ap:a}
-@D.post(At)
-async def Bh(payload,user=F(G)):D=payload.model_dump();D[E]=user[C];D[AO]=M.now(Q.utc).isoformat();F=await B.inventory.insert_one(D);D[C]=A(F.inserted_id);D.pop(L,R);return D
-@D.get(At)
-async def Bi(user=F(G)):A=await B.inventory.find({E:user[C]}).sort(d,1).to_list(1000);return[w(A)for A in A]
-@D.put(Av)
-async def Bj(iid,payload,user=F(G)):
-	A=payload.model_dump();A[AO]=M.now(Q.utc).isoformat();D=await B.inventory.update_one({L:U(iid),E:user[C]},{A5:A})
-	if D.matched_count==0:raise H(404,Au)
-	return{W:I}
-@D.delete(Av)
-async def Bk(iid,user=F(G)):
-	A=await B.inventory.delete_one({L:U(iid),E:user[C]})
-	if A.deleted_count==0:raise H(404,Au)
-	return{W:I}
-@D.post(Aw)
-async def Bl(payload,user=F(G)):D=payload.model_dump();D[E]=user[C];D[i]=M.now(Q.utc).isoformat();F=await B.expenses.insert_one(D);D[C]=A(F.inserted_id);D.pop(L,R);return D
-@D.get(Aw)
-async def Bm(user=F(G)):A=await B.expenses.find({E:user[C]}).sort(Ak,1).to_list(1000);return[w(A)for A in A]
-@D.put(Ay)
-async def Bn(eid,payload,user=F(G)):
-	A=payload.model_dump();D=await B.expenses.update_one({L:U(eid),E:user[C]},{A5:A})
-	if D.matched_count==0:raise H(404,Ax)
-	return{W:I}
-@D.delete(Ay)
-async def Bo(eid,user=F(G)):
-	A=await B.expenses.delete_one({L:U(eid),E:user[C]})
-	if A.deleted_count==0:raise H(404,Ax)
-	return{W:I}
-@D.post('/pricing/suggest')
-async def Bp(payload,user=F(G)):
-	R='text';Q='parts';P='application/json';J='total_suggested';I='reasoning';H='max_price';G='min_price';F='suggested_price';C=payload;L=C.checkin;M=C.checkout;D=m(L,M);N=X.environ.get('GEMINI_API_KEY')
-	if not N:c.warning("GEMINI_API_KEY non trovata nelle variabili d'ambiente. Uso fallback statico.");B=C.base_price;return{F:B,G:K(B*.8,2),H:K(B*1.4,2),T:D,J:K(B*D,2),I:"Configura la variabile d'ambiente GEMINI_API_KEY su Render per sbloccare i consigli reali dell'IA."}
-	S=f'''
-    Sei un assistente virtuale esperto di Revenue Management for strutture ricettive, B&B e case vacanze situate in: {C.location}.
+		payload=jwt.decode(token,JWT_SECRET,algorithms=[JWT_ALGORITHM])
+		if payload.get(_X)!='refresh':raise HTTPException(status_code=401,detail=_k)
+		user=await db.users.find_one({_D:ObjectId(payload[_W])})
+		if not user:raise HTTPException(status_code=401,detail=_A0)
+		access=create_access_token(str(user[_D]),user[_G]);response.set_cookie(_Y,access,httponly=_C,secure=_C,samesite=_i,max_age=86400,path=_K);return{_I:_C}
+	except jwt.InvalidTokenError:raise HTTPException(status_code=401,detail=_k)
+@api.post(_A1)
+async def create_booking(payload,user=Depends(get_current_user)):nights=nights_between(payload.checkin,payload.checkout);net=compute_net(payload.gross_price,payload.channel);doc=payload.model_dump();doc.update({_H:nights,_Q:net,_B:user[_A],_b:_F,_P:datetime.now(timezone.utc).isoformat()});result=await db.bookings.insert_one(doc);doc[_A]=str(result.inserted_id);doc.pop(_D,_F);return doc
+@api.get(_A1)
+async def list_bookings(user=Depends(get_current_user)):docs=await db.bookings.find({_B:user[_A]}).sort(_E,-1).to_list(2000);return[serialize_booking(d)for d in docs]
+@api.put(_A3)
+async def update_booking(bid,payload,user=Depends(get_current_user)):
+	nights=nights_between(payload.checkin,payload.checkout);net=compute_net(payload.gross_price,payload.channel);doc=payload.model_dump();doc.update({_H:nights,_Q:net});r=await db.bookings.update_one({_D:ObjectId(bid),_B:user[_A]},{_c:doc})
+	if r.matched_count==0:raise HTTPException(404,_A2)
+	updated=await db.bookings.find_one({_D:ObjectId(bid)});return serialize_booking(updated)
+@api.delete(_A3)
+async def delete_booking(bid,user=Depends(get_current_user)):
+	r=await db.bookings.delete_one({_D:ObjectId(bid),_B:user[_A]})
+	if r.deleted_count==0:raise HTTPException(404,_A2)
+	return{_I:_C}
+@api.post('/bookings/ical-import')
+async def ical_import(payload,user=Depends(get_current_user)):
+	A='isoformat'
+	try:resp=requests.get(payload.url,timeout=15);resp.raise_for_status();cal=Calendar.from_ical(resp.content)
+	except Exception as e:raise HTTPException(400,f"Impossibile leggere iCal: {e}")
+	imported=0;skipped=0
+	for comp in cal.walk():
+		if comp.name!='VEVENT':continue
+		uid=str(comp.get('UID',''))
+		if not uid:continue
+		if await db.bookings.find_one({_b:uid,_B:user[_A]}):skipped+=1;continue
+		dtstart=comp.get('DTSTART').dt;dtend=comp.get('DTEND').dt;ci=dtstart.isoformat()if hasattr(dtstart,A)else str(dtstart);co=dtend.isoformat()if hasattr(dtend,A)else str(dtend);summary=str(comp.get('SUMMARY','Ospite iCal'));nights=nights_between(ci,co);gross=payload.default_price*max(nights,1);doc={_S:summary[:40],_T:'(iCal)',_E:ci,_o:co,_R:gross,_d:payload.channel,'notes':str(comp.get('DESCRIPTION','')),_H:nights,_Q:compute_net(gross,payload.channel),_B:user[_A],_b:uid,_P:datetime.now(timezone.utc).isoformat()};await db.bookings.insert_one(doc);imported+=1
+	return{'imported':imported,'skipped':skipped}
+@api.get('/dashboard/stats')
+async def dashboard_stats(user=Depends(get_current_user)):
+	A='revenue';bookings=await db.bookings.find({_B:user[_A]}).to_list(5000);now=datetime.now(timezone.utc).date();year_start=date(now.year,1,1);total_gross=sum(b.get(_R,0)for b in bookings);total_net=sum(b.get(_Q,0)for b in bookings);year_bookings=[b for b in bookings if b.get(_E,'')>=year_start.isoformat()];year_gross=sum(b.get(_R,0)for b in year_bookings);year_net=sum(b.get(_Q,0)for b in year_bookings);year_nights=sum(b.get(_H,0)for b in year_bookings);days_in_year=366 if now.year%4==0 else 365;occupancy=round(year_nights/days_in_year*100,1)if days_in_year else 0;channels={}
+	for b in year_bookings:ch=b.get(_d,_M);channels[ch]=channels.get(ch,0)+b.get(_R,0)
+	monthly={}
+	for b in year_bookings:m=b.get(_E,'')[:7];monthly[m]=monthly.get(m,0)+b.get(_R,0)
+	monthly_list=[{'month':k,A:round(v,2)}for(k,v)in sorted(monthly.items())];channel_list=[{_d:k,A:round(v,2)}for(k,v)in channels.items()];return{'total_gross':round(total_gross,2),'total_net':round(total_net,2),'year_gross':round(year_gross,2),'year_net':round(year_net,2),'occupancy_pct':occupancy,'total_bookings':len(bookings),'year_bookings':len(year_bookings),'channels':channel_list,'monthly':monthly_list}
+@api.post(_A4)
+async def create_inventory(payload,user=Depends(get_current_user)):doc=payload.model_dump();doc[_B]=user[_A];doc[_p]=datetime.now(timezone.utc).isoformat();r=await db.inventory.insert_one(doc);doc[_A]=str(r.inserted_id);doc.pop(_D,_F);return doc
+@api.get(_A4)
+async def list_inventory(user=Depends(get_current_user)):docs=await db.inventory.find({_B:user[_A]}).sort(_L,1).to_list(1000);return[serialize_booking(d)for d in docs]
+@api.put(_A6)
+async def update_inventory(iid,payload,user=Depends(get_current_user)):
+	doc=payload.model_dump();doc[_p]=datetime.now(timezone.utc).isoformat();r=await db.inventory.update_one({_D:ObjectId(iid),_B:user[_A]},{_c:doc})
+	if r.matched_count==0:raise HTTPException(404,_A5)
+	return{_I:_C}
+@api.delete(_A6)
+async def delete_inventory(iid,user=Depends(get_current_user)):
+	r=await db.inventory.delete_one({_D:ObjectId(iid),_B:user[_A]})
+	if r.deleted_count==0:raise HTTPException(404,_A5)
+	return{_I:_C}
+@api.post(_A7)
+async def create_expense(payload,user=Depends(get_current_user)):doc=payload.model_dump();doc[_B]=user[_A];doc[_P]=datetime.now(timezone.utc).isoformat();r=await db.expenses.insert_one(doc);doc[_A]=str(r.inserted_id);doc.pop(_D,_F);return doc
+@api.get(_A7)
+async def list_expenses(user=Depends(get_current_user)):docs=await db.expenses.find({_B:user[_A]}).sort(_x,1).to_list(1000);return[serialize_booking(d)for d in docs]
+@api.put(_A9)
+async def update_expense(eid,payload,user=Depends(get_current_user)):
+	doc=payload.model_dump();r=await db.expenses.update_one({_D:ObjectId(eid),_B:user[_A]},{_c:doc})
+	if r.matched_count==0:raise HTTPException(404,_A8)
+	return{_I:_C}
+@api.delete(_A9)
+async def delete_expense(eid,user=Depends(get_current_user)):
+	r=await db.expenses.delete_one({_D:ObjectId(eid),_B:user[_A]})
+	if r.deleted_count==0:raise HTTPException(404,_A8)
+	return{_I:_C}
+@api.post('/pricing/suggest')
+async def suggest_price(payload,user=Depends(get_current_user)):
+	H='text';G='parts';F='application/json';E='total_suggested';D='reasoning';C='max_price';B='min_price';A='suggested_price';checkin=payload.checkin;checkout=payload.checkout;nights=nights_between(checkin,checkout);gemini_key=os.environ.get('GEMINI_API_KEY')
+	if not gemini_key:logger.warning("GEMINI_API_KEY non trovata nelle variabili d'ambiente. Uso fallback statico.");suggested=payload.base_price;return{A:suggested,B:round(suggested*.8,2),C:round(suggested*1.4,2),_H:nights,E:round(suggested*nights,2),D:"Configura la variabile d'ambiente GEMINI_API_KEY su Render per sbloccare i consigli reali dell'IA."}
+	prompt=f'''
+    Sei un assistente virtuale esperto di Revenue Management for strutture ricettive, B&B e case vacanze situate in: {payload.location}.
     Analizza i seguenti parametri inseriti dall\'host e calcola una tariffa ottimale:
-    - Data Check-in: {L}
-    - Data Check-out: {M}
-    - Notti totali: {D}
-    - Prezzo base dell\'host: {C.base_price}€ a notte
-    - Contesto occupazione / Richieste host: {C.occupancy_context or"Nessuna specifica"}
-    - Eventi segnalati o festività speciali: {C.events or"Nessuno specificato"}
+    - Data Check-in: {checkin}
+    - Data Check-out: {checkout}
+    - Notti totali: {nights}
+    - Prezzo base dell\'host: {payload.base_price}€ a notte
+    - Contesto occupazione / Richieste host: {payload.occupancy_context or"Nessuna specifica"}
+    - Eventi segnalati o festività speciali: {payload.events or"Nessuno specificato"}
 
     Istruzioni di calcolo:
-    1. Valuta la stagionalità naturale delle date indicate per la località \'{C.location}\'.
+    1. Valuta la stagionalità naturale delle date indicate per la località \'{payload.location}\'.
     2. Applica un leggero incremento strategico se le date includono il weekend (venerdì e sabato).
     3. Incrementa il prezzo in presenza di alta stagione, festività nazionali (Natale, Pasqua, Ferragosto, ponti) o eventi in zona.
     4. Riduci leggermente o mantieni stabile la tariffa se il contesto occupazione indica bassa richiesta o stanze rimaste vuote sotto data.
@@ -265,83 +255,84 @@ async def Bp(payload,user=F(G)):
       "reasoning": "una spiegazione commerciale in italiano di massimo 3 frasi che descriva la strategia applicata (es. aumento dovuto al weekend e ad un evento concomitante)."
     }}
     '''
-	try:U=f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={N}";W={'Content-Type':P};Y={'contents':[{Q:[{R:S}]}],'generationConfig':{'responseMimeType':P}};O=AW.post(U,json=Y,headers=W,timeout=15);O.raise_for_status();Z=O.json();a=Z['candidates'][0]['content'][Q][0][R];E=json.loads(a);B=V(E.get(F,C.base_price));return{F:K(B,2),G:K(V(E.get(G,B*.8)),2),H:K(V(E.get(H,B*1.4)),2),I:E.get(I,"Prezzo calcolato in tempo reale dall'IA."),T:D,J:K(B*D,2)}
-	except x as b:c.exception('Errore nella richiesta alle API di Gemini');B=C.base_price;return{F:B,G:K(B*.8,2),H:K(B*1.4,2),T:D,J:K(B*D,2),I:f"Servizio IA momentaneamente saturo. Applicata tariffa base di sicurezza. (Dettaglio: {A(b)[:45]})"}
-def AG(b):
+	try:url=f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={gemini_key}";headers={'Content-Type':F};data={'contents':[{G:[{H:prompt}]}],'generationConfig':{'responseMimeType':F}};response=requests.post(url,json=data,headers=headers,timeout=15);response.raise_for_status();result_json=response.json();ai_text=result_json['candidates'][0]['content'][G][0][H];parsed_data=json.loads(ai_text);suggested=float(parsed_data.get(A,payload.base_price));return{A:round(suggested,2),B:round(float(parsed_data.get(B,suggested*.8)),2),C:round(float(parsed_data.get(C,suggested*1.4)),2),D:parsed_data.get(D,"Prezzo calcolato in tempo reale dall'IA."),_H:nights,E:round(suggested*nights,2)}
+	except Exception as e:logger.exception('Errore nella richiesta alle API di Gemini');suggested=payload.base_price;return{A:suggested,B:round(suggested*.8,2),C:round(suggested*1.4,2),_H:nights,E:round(suggested*nights,2),D:f"Servizio IA momentaneamente saturo. Applicata tariffa base di sicurezza. (Dettaglio: {str(e)[:45]})"}
+def format_alloggiati_record(b):
 	'Genera un record fixed-width per il portale Alloggiati Web.'
 	try:
-		B=M.fromisoformat(b[P]).date();E=A(b.get(T,1)).zfill(2);F=(b.get('guest_type')or'16').ljust(2);G=(b.get(p)or J).upper().ljust(50)[:50];H=(b.get(o)or J).upper().ljust(30)[:30];I=(b.get('sex')or j).ljust(1)[:1];K=b.get(AP,'1980-01-01')
-		try:C=M.fromisoformat(K).date();D=f"{C.day:02d}/{C.month:02d}/{C.year}"
-		except x:D='01/01/1980'
-		L=(b.get(AQ)or J).upper().ljust(9)[:9];N='  ';O=(b.get(Az)or Z).upper().ljust(9)[:9];Q=(b.get(A_)or Z).upper().ljust(9)[:9];R=(b.get(B0)or A3).ljust(5)[:5];S=(b.get(AR)or J).upper().ljust(20)[:20];U=(b.get(B1)or J).upper().ljust(9)[:9];V=f"{B.day:02d}/{B.month:02d}/{B.year}";W=f"{F}{V}{E}{G}{H}{I}{D}{L}{N}{O}{Q}{R}{S}{U}";return W
-	except x as X:c.warning(f"Skip record: {X}");return
-@D.get('/alloggiati/export',response_class=s)
-async def Bq(start_date,end_date,user=F(G)):
-	D=end_date;A=start_date;H=await B.bookings.find({E:user[C],P:{AS:A,A7:D}}).to_list(1000);F=[]
-	for I in H:
-		G=AG(I)
-		if G:F.append(G)
-	J='\r\n'.join(F);return s(J,headers={AT:f'attachment; filename="alloggiati_{A}_{D}.txt"'})
-@D.get('/alloggiati/export-zip')
-async def Br(start_date,end_date,user=F(G)):
-	H=end_date;G=start_date;O=await B.bookings.find({E:user[C],P:{AS:G,A7:H}}).to_list(1000);L=[];M=[]
-	for F in O:
-		N=AG(F)
-		if N:L.append(N)
-		Q=f"{(F.get(p)or"X").upper()}_{(F.get(o)or"X").upper()}".replace(' ','_')
-		for(R,S)in enumerate(F.get(B2,[])or[]):
-			D=v/S
-			if D.exists():T=D.suffix or AU;I=f"foto_documenti/{Q}_{R+1}{T}";M.append((I,A(D)))
-	J=BytesIO()
-	with AY.ZipFile(J,'w',AY.ZIP_DEFLATED)as K:
-		K.writestr(f"alloggiati_{G}_{H}.txt",'\r\n'.join(L))
-		for(I,D)in M:K.write(D,I)
-		K.writestr('LEGGIMI.txt','Carica il file .txt sul portale Alloggiati Web della Polizia di Stato.\r\nLa cartella foto_documenti contiene le foto dei documenti per il tuo archivio interno (non richieste dal portale ma da conservare per obblighi di legge).')
-	J.seek(0);return B9(J,media_type='application/zip',headers={AT:f'attachment; filename="alloggiati_{G}_{H}.zip"'})
-@D.get('/uploads/{filename}')
-async def Bs(filename,user=F(G)):
-	B=filename;C=v/B
-	if not C.exists()or'..'in B or b in B:raise H(404,'File non trovato')
-	return BA(A(C))
-Ag=X.environ.get(Al,'admin@example.com')
-@D.get('/public/property-info')
-async def Bt():
-	'Info pubblica per il form guest – verifica che ci sia almeno un admin.';A=await B.users.find_one({S:Ag})
-	if not A:raise H(404,B3)
-	return{d:'Casa B&B','active':I}
-@D.post('/public/registration')
-async def Bu(guest_first_name=O(...),guest_last_name=O(...),checkin=O(...),checkout=O(...),channel=O(e),document_number=O(...),date_of_birth=O(...),place_of_birth=O(...),country_of_birth=O(Z),citizenship=O(Z),sex=O(j),document_type=O(A3),document_place=O(J),photos=File(default=[])):
-	K=channel;J=checkout;G=checkin;N=await B.users.find_one({S:Ag})
-	if not N:raise H(400,B3)
-	X=A(N[L]);F=[]
-	for D in photos or[]:
-		if not D.filename:continue
-		O=Path(D.filename).suffix.lower()or AU
-		if O not in[AU,'.jpeg','.png','.webp','.pdf','.heic']:continue
-		U=f"doc_{uuid.uuid4().hex}{O}";V=await D.read()
-		if g(V)>15728640:raise H(400,f"File {D.filename} troppo grande (max 15MB)")
-		(v/U).write_bytes(V);F.append(U)
-	Y=m(G,J);a={o:guest_first_name.strip(),p:guest_last_name.strip(),P:G,AN:J,l:.0,A6:K if K in Af else e,'notes':'Registrazione ospite via form pubblico',AP:date_of_birth,AQ:place_of_birth.strip(),Az:country_of_birth.strip()or Z,A_:citizenship.strip()or Z,'sex':sex if sex in(j,'F')else j,B0:document_type.strip()or A3,AR:document_number.strip(),B1:document_place.strip(),T:Y,k:.0,E:X,A4:R,B2:F,'source':'public_form',i:M.now(Q.utc).isoformat()};b=await B.bookings.insert_one(a);return{W:I,C:A(b.inserted_id),'photos_uploaded':g(F)}
-@D.get('/alloggiati/preview')
-async def Bv(start_date,end_date,user=F(G)):
-	F=await B.bookings.find({E:user[C],P:{AS:start_date,A7:end_date}}).to_list(1000);G=[]
-	for A in F:D=AG(A);G.append({'guest':f"{A.get(o,J)} {A.get(p,J)}",P:A.get(P),T:A.get(T),'valid':D is not R,'line_preview':D[:80]+'...'if D and g(D)>80 else D,'missing':[B for B in[AP,AQ,AR]if not A.get(B)]})
-	return{'total':g(F),'records':G}
-class Bw(Y):codice_struttura:A;camere_disponibili:int;letti_disponibili:int
-@D.get(B4)
-async def Bx(user=F(G)):
-	A=await B.settings.find_one({E:user[C],A8:A9})
-	if not A:return{f:J,q:1,AA:2}
-	return{f:A.get(f,J),q:A.get(q,1),AA:A.get(AA,2)}
-@D.post(B4)
-async def By(payload,user=F(G)):await B.settings.update_one({E:user[C],A8:A9},{A5:{**payload.model_dump(),E:user[C],A8:A9,AO:M.now(Q.utc).isoformat()}},upsert=I);return{W:I}
-async def Ah(user_id):
-	A=await B.settings.find_one({E:user_id,A8:A9})
-	if not A or not A.get(f):raise H(400,'Configura prima il codice struttura e le camere/letti disponibili in Impostazioni ROSS 1000.')
-	return A
-async def Ai(user_id,year,month):C=month;A=year;H,D=__import__('calendar').monthrange(A,C);F=AD(A,C,1).isoformat();G=AD(A,C,D).isoformat();return await B.bookings.find({E:user_id,P:{A7:G},AN:{'$gt':F}}).to_list(2000)
-@D.get('/ross1000/preview')
-async def Bz(year,month,user=F(G)):A=month;B=await Ah(user[C]);E=await Ai(user[C],year,A);D=BG(year,A,E,B[q]);D[f]=B[f];return D
-@D.get('/ross1000/export-xml',response_class=s)
-async def B_(year,month,user=F(G)):B=month;A=year;D=await Ah(user[C]);E=await Ai(user[C],A,B);F=BF(codice_struttura=D[f],year=A,month=B,bookings=E,camere_disponibili=D[q],letti_disponibili=D[AA]);G=f"ross1000_{A}_{B:02d}.xml";return s(F,media_type='application/xml',headers={AT:f'attachment; filename="{G}"'})
-Ab.include_router(D)
+		ci=datetime.fromisoformat(b[_E]).date();nights=str(b.get(_H,1)).zfill(2);tipo=(b.get('guest_type')or'16').ljust(2);cognome=(b.get(_T)or'').upper().ljust(50)[:50];nome=(b.get(_S)or'').upper().ljust(30)[:30];sesso=(b.get('sex')or'M').ljust(1)[:1];dob=b.get(_q,'1980-01-01')
+		try:dob_d=datetime.fromisoformat(dob).date();dob_str=f"{dob_d.day:02d}/{dob_d.month:02d}/{dob_d.year}"
+		except Exception:dob_str='01/01/1980'
+		comune_nascita=(b.get(_r)or'').upper().ljust(9)[:9];provincia='  ';stato_nascita=(b.get(_AA)or _J).upper().ljust(9)[:9];cittadinanza=(b.get(_AB)or _J).upper().ljust(9)[:9];doc_tipo=(b.get(_AC)or _a).ljust(5)[:5];doc_num=(b.get(_s)or'').upper().ljust(20)[:20];doc_luogo=(b.get(_AD)or'').upper().ljust(9)[:9];arrivo=f"{ci.day:02d}/{ci.month:02d}/{ci.year}";line=f"{tipo}{arrivo}{nights}{cognome}{nome}{sesso}{dob_str}{comune_nascita}{provincia}{stato_nascita}{cittadinanza}{doc_tipo}{doc_num}{doc_luogo}";return line
+	except Exception as e:logger.warning(f"Skip record: {e}");return
+@api.get('/alloggiati/export',response_class=PlainTextResponse)
+async def alloggiati_export(start_date,end_date,user=Depends(get_current_user)):
+	bookings=await db.bookings.find({_B:user[_A],_E:{_t:start_date,_e:end_date}}).to_list(1000);lines=[]
+	for b in bookings:
+		line=format_alloggiati_record(b)
+		if line:lines.append(line)
+	content='\r\n'.join(lines);return PlainTextResponse(content,headers={_u:f'attachment; filename="alloggiati_{start_date}_{end_date}.txt"'})
+@api.get('/alloggiati/export-zip')
+async def alloggiati_export_zip(start_date,end_date,user=Depends(get_current_user)):
+	bookings=await db.bookings.find({_B:user[_A],_E:{_t:start_date,_e:end_date}}).to_list(1000);lines=[];photo_files=[]
+	for b in bookings:
+		line=format_alloggiati_record(b)
+		if line:lines.append(line)
+		safe_name=f"{(b.get(_T)or"X").upper()}_{(b.get(_S)or"X").upper()}".replace(' ','_')
+		for(i,p)in enumerate(b.get(_AE,[])or[]):
+			fpath=UPLOAD_DIR/p
+			if fpath.exists():ext=fpath.suffix or _v;arc=f"foto_documenti/{safe_name}_{i+1}{ext}";photo_files.append((arc,str(fpath)))
+	buf=BytesIO()
+	with zipfile.ZipFile(buf,'w',zipfile.ZIP_DEFLATED)as zf:
+		zf.writestr(f"alloggiati_{start_date}_{end_date}.txt",'\r\n'.join(lines))
+		for(arc,fpath)in photo_files:zf.write(fpath,arc)
+		zf.writestr('LEGGIMI.txt','Carica il file .txt sul portale Alloggiati Web della Polizia di Stato.\r\nLa cartella foto_documenti contiene le foto dei documenti per il tuo archivio interno (non richieste dal portale ma da conservare per obblighi di legge).')
+	buf.seek(0);return StreamingResponse(buf,media_type='application/zip',headers={_u:f'attachment; filename="alloggiati_{start_date}_{end_date}.zip"'})
+@api.get('/uploads/{filename}')
+async def get_upload(filename,user=Depends(get_current_user)):
+	fpath=UPLOAD_DIR/filename
+	if not fpath.exists()or'..'in filename or _K in filename:raise HTTPException(404,'File non trovato')
+	return FileResponse(str(fpath))
+ADMIN_EMAIL_ENV=os.environ.get(_y,'admin@example.com')
+@api.get('/public/property-info')
+async def public_property_info():
+	'Info pubblica per il form guest – verifica che ci sia almeno un admin.';admin=await db.users.find_one({_G:ADMIN_EMAIL_ENV})
+	if not admin:raise HTTPException(404,_AF)
+	return{_L:'Casa B&B','active':_C}
+@api.post('/public/registration')
+async def public_registration(guest_first_name=Form(...),guest_last_name=Form(...),checkin=Form(...),checkout=Form(...),channel=Form(_M),document_number=Form(...),date_of_birth=Form(...),place_of_birth=Form(...),country_of_birth=Form(_J),citizenship=Form(_J),sex=Form('M'),document_type=Form(_a),document_place=Form(''),photos=File(default=[])):
+	proprietario=await db.users.find_one({_G:ADMIN_EMAIL_ENV})
+	if not proprietario:raise HTTPException(400,_AF)
+	owner_id=str(proprietario[_D]);photo_paths=[]
+	for f in photos or[]:
+		if not f.filename:continue
+		ext=Path(f.filename).suffix.lower()or _v
+		if ext not in[_v,'.jpeg','.png','.webp','.pdf','.heic']:continue
+		safe=f"doc_{uuid.uuid4().hex}{ext}";content=await f.read()
+		if len(content)>15728640:raise HTTPException(400,f"File {f.filename} troppo grande (max 15MB)")
+		(UPLOAD_DIR/safe).write_bytes(content);photo_paths.append(safe)
+	nights=nights_between(checkin,checkout);doc={_S:guest_first_name.strip(),_T:guest_last_name.strip(),_E:checkin,_o:checkout,_R:.0,_d:channel if channel in CHANNEL_COMMISSION else _M,'notes':'Registrazione ospite via form pubblico',_q:date_of_birth,_r:place_of_birth.strip(),_AA:country_of_birth.strip()or _J,_AB:citizenship.strip()or _J,'sex':sex if sex in('M','F')else'M',_AC:document_type.strip()or _a,_s:document_number.strip(),_AD:document_place.strip(),_H:nights,_Q:.0,_B:owner_id,_b:_F,_AE:photo_paths,'source':'public_form',_P:datetime.now(timezone.utc).isoformat()};result=await db.bookings.insert_one(doc);return{_I:_C,_A:str(result.inserted_id),'photos_uploaded':len(photo_paths)}
+@api.get('/alloggiati/preview')
+async def alloggiati_preview(start_date,end_date,user=Depends(get_current_user)):
+	bookings=await db.bookings.find({_B:user[_A],_E:{_t:start_date,_e:end_date}}).to_list(1000);records=[]
+	for b in bookings:line=format_alloggiati_record(b);records.append({'guest':f"{b.get(_S,"")} {b.get(_T,"")}",_E:b.get(_E),_H:b.get(_H),'valid':line is not _F,'line_preview':line[:80]+'...'if line and len(line)>80 else line,'missing':[k for k in[_q,_r,_s]if not b.get(k)]})
+	return{'total':len(bookings),'records':records}
+class Ross1000Settings(BaseModel):codice_struttura:str;camere_disponibili:int;letti_disponibili:int
+@api.get(_AG)
+async def get_ross_settings(user=Depends(get_current_user)):
+	doc=await db.settings.find_one({_B:user[_A],_f:_g})
+	if not doc:return{_N:'',_U:1,_h:2}
+	return{_N:doc.get(_N,''),_U:doc.get(_U,1),_h:doc.get(_h,2)}
+@api.post(_AG)
+async def save_ross_settings(payload,user=Depends(get_current_user)):await db.settings.update_one({_B:user[_A],_f:_g},{_c:{**payload.model_dump(),_B:user[_A],_f:_g,_p:datetime.now(timezone.utc).isoformat()}},upsert=_C);return{_I:_C}
+async def _load_ross_settings(user_id):
+	doc=await db.settings.find_one({_B:user_id,_f:_g})
+	if not doc or not doc.get(_N):raise HTTPException(400,'Configura prima il codice struttura e le camere/letti disponibili in Impostazioni ROSS 1000.')
+	return doc
+async def _month_bookings(user_id,year,month):_,last_day=__import__('calendar').monthrange(year,month);month_start=date(year,month,1).isoformat();month_end=date(year,month,last_day).isoformat();return await db.bookings.find({_B:user_id,_E:{_e:month_end},_o:{'$gt':month_start}}).to_list(2000)
+@api.get('/ross1000/preview')
+async def ross_preview(year,month,user=Depends(get_current_user)):settings=await _load_ross_settings(user[_A]);bookings=await _month_bookings(user[_A],year,month);stats=compute_month_stats(year,month,bookings,settings[_U]);stats[_N]=settings[_N];return stats
+@api.get('/ross1000/export-xml',response_class=PlainTextResponse)
+async def ross_export_xml(year,month,user=Depends(get_current_user)):settings=await _load_ross_settings(user[_A]);bookings=await _month_bookings(user[_A],year,month);xml=build_movimenti_xml(codice_struttura=settings[_N],year=year,month=month,bookings=bookings,camere_disponibili=settings[_U],letti_disponibili=settings[_h]);fname=f"ross1000_{year}_{month:02d}.xml";return PlainTextResponse(xml,media_type='application/xml',headers={_u:f'attachment; filename="{fname}"'})
+app.include_router(api)
+globals()['app']=app
