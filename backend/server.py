@@ -50,7 +50,6 @@ async def lifespan(app: FastAPI):
     await db.inventory.create_index([("owner_id", 1)])
     await db.expenses.create_index([("owner_id", 1), ("due_date", 1)])
     
-    # Configurazione credenziali Admin iniziali da pannello Render
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@bnb.it").lower()
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
     
@@ -72,16 +71,11 @@ async def lifespan(app: FastAPI):
     logger.info("Chiusura dell'applicazione: disconnessione da MongoDB...")
     client.close()
 
-# Inizializzazione App
 app = FastAPI(title="B&B Manager", lifespan=lifespan)
 
 # --------------------- Configurazione CORS Dinamica ---------------------
 frontend_url_env = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
-
-allowed_origins = [
-    frontend_url_env,
-    "http://localhost:3000"
-]
+allowed_origins = [frontend_url_env, "http://localhost:3000"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -453,7 +447,6 @@ async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(404, "Spesa non trovata")
     return {"ok": True}
 
-# --------------------- Pricing AI ---------------------
 # --------------------- Pricing AI (Fix URL Adapter Definitivo) ---------------------
 @api.post("/pricing/suggest")
 async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_current_user)):
@@ -461,7 +454,6 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
     checkout = payload.checkout
     nights = nights_between(checkin, checkout)
     
-    # Prendi la chiave e rimuovi tassativamente spazi, parentesi quadre e virgolette spurie
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
     gemini_key = gemini_key.replace("[", "").replace("]", "").replace("'", "").replace('"', "").strip()
     
@@ -535,6 +527,7 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
             "total_suggested": round(suggested * nights, 2),
             "reasoning": f"Servizio IA momentaneamente non disponibile. (Dettaglio: {str(e)[:40]})"
         }
+
 # --------------------- Alloggiati Web Export ---------------------
 def format_alloggiati_record(b: dict) -> Optional[str]:
     try:
@@ -581,6 +574,7 @@ async def get_upload(filename: str, user: dict = Depends(get_current_user)):
     if not fpath.exists() or ".." in filename:
         raise HTTPException(404, "File non trovato")
     return FileResponse(str(fpath))
+
 # --------------------- Public Guest Form ---------------------
 ADMIN_EMAIL_ENV = os.environ.get("ADMIN_EMAIL", "admin@example.com")
 
