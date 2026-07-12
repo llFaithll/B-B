@@ -444,54 +444,66 @@ async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --------------------- Pricing AI (Fix URL Adapter Definitivo) ---------------------
-# --------------------- Pricing AI (Fix Permessi Gemini 1.0 Pro) ---------------------
+# --------------------- Pricing AI (Switch a Groq Ultra-Stabile) ---------------------
 @api.post("/pricing/suggest")
 async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_current_user)):
     checkin = payload.checkin
     checkout = payload.checkout
     nights = nights_between(checkin, checkout)
     
-    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    # Recupera la chiave di Groq dalla stessa variabile d'ambiente
+    groq_key = os.environ.get("GEMINI_API_KEY", "").strip()
     for c in ["[", "]", "(", ")", "'", '"', " "]:
-        gemini_key = gemini_key.replace(c, "")
+        groq_key = groq_key.replace(c, "")
         
-    if "http" in gemini_key or not gemini_key:
+    if not groq_key:
         suggested = payload.base_price
         return {
             "suggested_price": suggested, "min_price": round(suggested * 0.8, 2),
             "max_price": round(suggested * 1.4, 2), "nights": nights,
             "total_suggested": round(suggested * nights, 2),
-            "reasoning": "Configura o ripulisci la chiave GEMINI_API_KEY su Render."
+            "reasoning": "Configura la chiave di Groq nella variabile GEMINI_API_KEY su Render."
         }
 
-    prompt = (
-        f"Sei un esperto di tariffe hotel a {payload.location}. "
-        f"Calcola il prezzo ideale a notte sapendo che il prezzo base e {payload.base_price} euro, "
-        f"le notti sono {nights}, il contesto di occupazione e '{payload.occupancy_context or 'normale'}' "
-        f"e gli eventi in zona sono '{payload.events or 'nessuno'}'. "
-        f"Rispondi solo con un oggetto JSON valido contenente le chiavi "
-        f"suggested_price (numero), min_price (numero), max_price (numero) e "
-        f"reasoning (stringa di spiegazione breve in italiano)."
-    )
+    prompt = f"""
+    Sei un assistente virtuale esperto di Revenue Management per strutture ricettive situato in: {payload.location}.
+    Calcola la tariffa ottimale basandoti su:
+    - Prezzo base dell'host: {payload.base_price}€ a notte
+    - Notti: {nights}
+    - Contesto occupazione: {payload.occupancy_context or 'Nessuna specifica'}
+    - Eventi: {payload.events or 'Nessuno'}
     
+    Restituisci la risposta esclusivamente in formato JSON valido, senza blocchi di codice markdown (no ```json). Il JSON deve contenere queste esatte chiavi:
+    {{
+      "suggested_price": numero,
+      "min_price": numero,
+      "max_price": numero,
+      "reasoning": "spiegazione commerciale in italiano di massimo 3 frasi"
+    }}
+    """
     try:
-        # Passaggio a gemini-1.0-pro (Risolve il 404 di restrizione sui nuovi progetti)
-        base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent"
-        url = f"{base_url}?key={gemini_key}"
-        
-        headers = {"Content-Type": "application/json"}
+        # Endpoint ufficiale compatibile con OpenAI di Groq
+        url = "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)"
+        headers = {
+            "Authorization": f"Bearer {groq_key}",
+            "Content-Type": "application/json"
+        }
         data = {
-            "contents": [{
-                "parts": [{"text": str(prompt)}]
-            }]
+            "model": "llama-3.1-8b-instant",
+            "messages": [
+                {"role": "system", "content": "Sei un analista economico che risponde solo in JSON puro senza markdown."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2
         }
         
         response = requests.post(url, json=data, headers=headers, timeout=15)
         response.raise_for_status()
         
         res_json = response.json()
-        ai_text = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+        ai_text = res_json["choices"][0]["message"]["content"].strip()
         
+        # Pulizia protettiva del JSON
         if ai_text.startswith("```"):
             ai_text = ai_text.split("```")[1]
             if ai_text.startswith("json"):
@@ -505,12 +517,12 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
             "suggested_price": round(suggested, 2),
             "min_price": round(float(parsed.get("min_price", suggested * 0.8)), 2),
             "max_price": round(float(parsed.get("max_price", suggested * 1.4)), 2),
-            "reasoning": parsed.get("reasoning", "Calcolato dall'IA."),
+            "reasoning": parsed.get("reasoning", "Calcolato dall'IA di bordo."),
             "nights": nights, 
             "total_suggested": round(suggested * nights, 2)
         }
     except Exception as e:
-        logger.error(f"Errore chiamata Gemini: {e}")
+        logger.error(f"Errore chiamata Groq: {e}")
         suggested = payload.base_price
         return {
             "suggested_price": suggested, 
