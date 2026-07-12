@@ -444,6 +444,7 @@ async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --------------------- Pricing AI (Fix URL Adapter Definitivo) ---------------------
+# --------------------- Pricing AI (Fix Permessi Gemini 1.0 Pro) ---------------------
 @api.post("/pricing/suggest")
 async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_current_user)):
     checkin = payload.checkin
@@ -474,8 +475,8 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
     )
     
     try:
-        # Endpoint v1beta ufficiale di Google
-        base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        # Passaggio a gemini-1.0-pro (Risolve il 404 di restrizione sui nuovi progetti)
+        base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent"
         url = f"{base_url}?key={gemini_key}"
         
         headers = {"Content-Type": "application/json"}
