@@ -444,7 +444,6 @@ async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --------------------- Pricing AI (Fix URL Adapter Definitivo) ---------------------
-# --------------------- Pricing AI (Fix Radicale Blindato) ---------------------
 @api.post("/pricing/suggest")
 async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_current_user)):
     checkin = payload.checkin
@@ -452,7 +451,6 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
     nights = nights_between(checkin, checkout)
     
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    # Rimuoviamo qualsiasi residuo strano di parentesi o link accumulato nella chiave
     for c in ["[", "]", "(", ")", "'", '"', " "]:
         gemini_key = gemini_key.replace(c, "")
         
@@ -465,7 +463,6 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
             "reasoning": "Configura o ripulisci la chiave GEMINI_API_KEY su Render."
         }
 
-    # Prompt ultra-pulito senza menzioni a modelli, url o documentazione
     prompt = (
         f"Sei un esperto di tariffe hotel a {payload.location}. "
         f"Calcola il prezzo ideale a notte sapendo che il prezzo base e {payload.base_price} euro, "
@@ -477,8 +474,9 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
     )
     
     try:
-        # Costruzione URL atomica
-        url = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=" + str(gemini_key)
+        # Endpoint v1beta ufficiale di Google
+        base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        url = f"{base_url}?key={gemini_key}"
         
         headers = {"Content-Type": "application/json"}
         data = {
