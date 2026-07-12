@@ -454,8 +454,10 @@ async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --------------------- Pricing AI ---------------------
+# --------------------- Pricing AI (Aggiornato & Compatibile) ---------------------
 @api.post("/pricing/suggest")
-async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_current_user)):
+async def suggest_price(payload: PricingSuggestIn, request: Request):
+    await get_current_user_raw(request)
     checkin = payload.checkin
     checkout = payload.checkout
     nights = nights_between(checkin, checkout)
@@ -467,43 +469,69 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
             "suggested_price": suggested, "min_price": round(suggested * 0.8, 2),
             "max_price": round(suggested * 1.4, 2), "nights": nights,
             "total_suggested": round(suggested * nights, 2),
-            "reasoning": "Configura la variabile d'ambiente GEMINI_API_KEY su Render per sbloccare i consigli dell'IA."
+            "reasoning": "Configura la variabile d'ambiente GEMINI_API_KEY su Render."
         }
 
     prompt = f"""
-    Sei un assistente virtuale esperto di Revenue Management for strutture ricettive situato in: {payload.location}.
+    Sei un assistente virtuale esperto di Revenue Management per strutture ricettive situato in: {payload.location}.
     Calcola la tariffa ottimale basandoti su:
     - Prezzo base dell'host: {payload.base_price}€ a notte
     - Notti: {nights}
     - Contesto occupazione: {payload.occupancy_context or 'Nessuna specifica'}
     - Eventi: {payload.events or 'Nessuno'}
     
-    Restituisci ESCLUSIVAMENTE un oggetto JSON valido:
+    Restituisci la risposta esclusivamente in formato JSON valido, senza blocchi di codice markdown (no ```json). Il JSON deve contenere queste esatte chiavi:
     {{
       "suggested_price": numero,
       "min_price": numero,
       "max_price": numero,
-      "reasoning": "spiegazione in italiano"
+      "reasoning": "spiegazione commerciale in italiano di massimo 3 frasi"
     }}
     """
     try:
-        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+        url = f"[https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=){gemini_key}"
         headers = {"Content-Type": "application/json"}
-        data = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"responseMimeType": "application/json"}}
+        data = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
+        
         response = requests.post(url, json=data, headers=headers, timeout=15)
         response.raise_for_status()
-        ai_text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-        parsed_data = json.loads(ai_text)
-        suggested = float(parsed_data.get("suggested_price", payload.base_price))
+        
+        res_json = response.json()
+        ai_text = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+        
+        # Pulizia di sicurezza nel caso in cui Gemini inserisca del testo o markdown estraneo
+        if ai_text.startswith("```"):
+            ai_text = ai_text.split("```")[1]
+            if ai_text.startswith("json"):
+                ai_text = ai_text[4:]
+        ai_text = ai_text.strip()
+        
+        parsed = json.loads(ai_text)
+        suggested = float(parsed.get("suggested_price", payload.base_price))
+        
         return {
             "suggested_price": round(suggested, 2),
-            "min_price": round(float(parsed_data.get("min_price", suggested * 0.8)), 2),
-            "max_price": round(float(parsed_data.get("max_price", suggested * 1.4)), 2),
-            "reasoning": parsed_data.get("reasoning", "Calcolato dall'IA."),
-            "nights": nights, "total_suggested": round(suggested * nights, 2)
+            "min_price": round(float(parsed.get("min_price", suggested * 0.8)), 2),
+            "max_price": round(float(parsed.get("max_price", suggested * 1.4)), 2),
+            "reasoning": parsed.get("reasoning", "Calcolato dall'IA."),
+            "nights": nights, 
+            "total_suggested": round(suggested * nights, 2)
         }
     except Exception as e:
-        return {"suggested_price": payload.base_price, "nights": nights, "reasoning": f"Errore IA fallback: {str(e)[:45]}"}
+        logger.error(f"Errore chiamata Gemini: {e}")
+        suggested = payload.base_price
+        return {
+            "suggested_price": suggested, 
+            "min_price": round(suggested * 0.8, 2),
+            "max_price": round(suggested * 1.4, 2),
+            "nights": nights, 
+            "total_suggested": round(suggested * nights, 2),
+            "reasoning": f"Servizio IA momentaneamente non disponibile. (Dettaglio: {str(e)[:40]})"
+        }
 
 # --------------------- Alloggiati Web Export ---------------------
 def format_alloggiati_record(b: dict) -> Optional[str]:
