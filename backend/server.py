@@ -454,13 +454,14 @@ async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --------------------- Pricing AI ---------------------
+# --------------------- Pricing AI (Fix URL Adapter) ---------------------
 @api.post("/pricing/suggest")
 async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_current_user)):
     checkin = payload.checkin
     checkout = payload.checkout
     nights = nights_between(checkin, checkout)
     
-    gemini_key = os.environ.get("GEMINI_API_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not gemini_key:
         suggested = payload.base_price
         return {
@@ -487,7 +488,10 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
     }}
     """
     try:
-        url = f"[https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=){gemini_key}"
+        # Generazione URL pulita senza concatenazioni f-string complesse
+        base_url = "[https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent](https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent)"
+        url = f"{base_url}?key={gemini_key}"
+        
         headers = {"Content-Type": "application/json"}
         data = {
             "contents": [{
