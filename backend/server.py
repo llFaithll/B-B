@@ -454,10 +454,8 @@ async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --------------------- Pricing AI ---------------------
-# --------------------- Pricing AI (Aggiornato & Compatibile) ---------------------
 @api.post("/pricing/suggest")
-async def suggest_price(payload: PricingSuggestIn, request: Request):
-    await get_current_user_raw(request)
+async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_current_user)):
     checkin = payload.checkin
     checkout = payload.checkout
     nights = nights_between(checkin, checkout)
@@ -503,7 +501,6 @@ async def suggest_price(payload: PricingSuggestIn, request: Request):
         res_json = response.json()
         ai_text = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
         
-        # Pulizia di sicurezza nel caso in cui Gemini inserisca del testo o markdown estraneo
         if ai_text.startswith("```"):
             ai_text = ai_text.split("```")[1]
             if ai_text.startswith("json"):
@@ -532,7 +529,6 @@ async def suggest_price(payload: PricingSuggestIn, request: Request):
             "total_suggested": round(suggested * nights, 2),
             "reasoning": f"Servizio IA momentaneamente non disponibile. (Dettaglio: {str(e)[:40]})"
         }
-
 # --------------------- Alloggiati Web Export ---------------------
 def format_alloggiati_record(b: dict) -> Optional[str]:
     try:
@@ -579,7 +575,6 @@ async def get_upload(filename: str, user: dict = Depends(get_current_user)):
     if not fpath.exists() or ".." in filename:
         raise HTTPException(404, "File non trovato")
     return FileResponse(str(fpath))
-
 # --------------------- Public Guest Form ---------------------
 ADMIN_EMAIL_ENV = os.environ.get("ADMIN_EMAIL", "admin@example.com")
 
