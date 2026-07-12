@@ -61,8 +61,8 @@ _J='/'
 _I='ok'
 _H='nights'
 _G='email'
-_F=None
-_E='checkin'
+_F='checkin'
+_E=None
 _D='_id'
 _C=True
 _B='owner_id'
@@ -98,7 +98,7 @@ logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(name)s - %(leveln
 logger=logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app):
-	A='admin';logger.info("Avvio dell'applicazione: configurazione indici MongoDB...");await db.users.create_index(_G,unique=_C);await db.bookings.create_index([(_B,1),(_E,-1)]);await db.inventory.create_index([(_B,1)]);await db.expenses.create_index([(_B,1),(_y,1)]);admin_email=os.environ.get(_z,'admin@bnb.it').lower();admin_pw=os.environ.get('ADMIN_PASSWORD','admin123');any_admin=await db.users.find_one({_O:A})
+	A='admin';logger.info("Avvio dell'applicazione: configurazione indici MongoDB...");await db.users.create_index(_G,unique=_C);await db.bookings.create_index([(_B,1),(_F,-1)]);await db.inventory.create_index([(_B,1)]);await db.expenses.create_index([(_B,1),(_y,1)]);admin_email=os.environ.get(_z,'admin@bnb.it').lower();admin_pw=os.environ.get('ADMIN_PASSWORD','admin123');any_admin=await db.users.find_one({_O:A})
 	if not any_admin:await db.users.insert_one({_G:admin_email,_V:hash_password(admin_pw),_L:'Admin B&B',_O:A,_P:datetime.now(timezone.utc).isoformat()});logger.info(f"Seeded primo admin del database: {admin_email}")
 	else:logger.info('Un amministratore è già presente nel database. Salto il seeding iniziale.')
 	yield;logger.info("Chiusura dell'applicazione: disconnessione da MongoDB...");client.close()
@@ -127,12 +127,12 @@ async def get_current_user(request):
 		if payload.get(_X)!='access':raise HTTPException(status_code=401,detail='Invalid token type')
 		user=await db.users.find_one({_D:ObjectId(payload[_W])})
 		if not user:raise HTTPException(status_code=401,detail=_A0)
-		user[_A]=str(user[_D]);user.pop(_D,_F);user.pop(_V,_F);return user
+		user[_A]=str(user[_D]);user.pop(_D,_E);user.pop(_V,_E);return user
 	except jwt.ExpiredSignatureError:raise HTTPException(status_code=401,detail='Token expired')
 	except jwt.InvalidTokenError:raise HTTPException(status_code=401,detail=_l)
 class RegisterIn(BaseModel):email:EmailStr;password:str;name:str
 class LoginIn(BaseModel):email:EmailStr;password:str
-class BookingIn(BaseModel):guest_first_name:str;guest_last_name:str;checkin:str;checkout:str;gross_price:float;channel:Literal[_Z,_m,_M,_n]=_M;notes:Optional[str]='';date_of_birth:Optional[str]=_F;place_of_birth:Optional[str]=_F;country_of_birth:Optional[str]=_K;citizenship:Optional[str]=_K;sex:Optional[Literal['M','F']]='M';document_type:Optional[str]=_a;document_number:Optional[str]=_F;document_place:Optional[str]=_F;guest_type:Optional[str]='16'
+class BookingIn(BaseModel):guest_first_name:str;guest_last_name:str;checkin:str;checkout:str;gross_price:float;channel:Literal[_Z,_m,_M,_n]=_M;notes:Optional[str]='';date_of_birth:Optional[str]=_E;place_of_birth:Optional[str]=_E;country_of_birth:Optional[str]=_K;citizenship:Optional[str]=_K;sex:Optional[Literal['M','F']]='M';document_type:Optional[str]=_a;document_number:Optional[str]=_E;document_place:Optional[str]=_E;guest_type:Optional[str]='16'
 class InventoryIn(BaseModel):name:str;category:Optional[str]='Generale';quantity:float;unit:Optional[str]='pz';min_threshold:float=0;price_per_unit:Optional[float]=0
 class ExpenseIn(BaseModel):name:str;category:str;amount:float;due_date:str;recurrence:Literal['once','monthly','quarterly','yearly']='once';paid:bool=False;notes:Optional[str]=''
 class ICalImportIn(BaseModel):url:str;channel:Literal[_Z,_m,_M,_n]=_Z;default_price:float=8e1
@@ -148,10 +148,16 @@ async def register(payload,response):
 	if await db.users.find_one({_G:email}):raise HTTPException(status_code=400,detail='Email già registrata')
 	doc={_G:email,_V:hash_password(payload.password),_L:payload.name,_O:_o,_P:datetime.now(timezone.utc).isoformat()};result=await db.users.insert_one(doc);uid=str(result.inserted_id);set_auth_cookies(response,create_access_token(uid,email),create_refresh_token(uid));return{_A:uid,_G:email,_L:payload.name,_O:_o}
 @api.post('/auth/login')
-async def login(payload,response):
-	email=payload.email.lower();user=await db.users.find_one({_G:email})
-	if not user or not verify_password(payload.password,user[_V]):raise HTTPException(status_code=401,detail='Credenziali non valide')
-	uid=str(user[_D]);set_auth_cookies(response,create_access_token(uid,email),create_refresh_token(uid));return{_A:uid,_G:email,_L:user.get(_L),_O:user.get(_O,_o)}
+async def login(request,response,payload=_E,email=Form(_E),password=Form(_E)):
+	login_email=payload.email if payload else _E;login_password=payload.password if payload else _E
+	if not login_email or not login_password:login_email=email;login_password=password
+	if not login_email or not login_password:
+		try:body=await request.json();login_email=body.get(_G);login_password=body.get('password')
+		except Exception:pass
+	if not login_email or not login_password:raise HTTPException(status_code=422,detail='Email e Password richieste nel body')
+	login_email=login_email.lower();user=await db.users.find_one({_G:login_email})
+	if not user or not verify_password(login_password,user[_V]):raise HTTPException(status_code=401,detail='Credenziali non valide')
+	uid=str(user[_D]);set_auth_cookies(response,create_access_token(uid,login_email),create_refresh_token(uid));return{_A:uid,_G:login_email,_L:user.get(_L),_O:user.get(_O,_o)}
 @api.post('/auth/logout')
 async def logout(response):response.delete_cookie(_Y,path=_J);response.delete_cookie(_k,path=_J);return{_I:_C}
 @api.get('/auth/me')
@@ -168,9 +174,9 @@ async def refresh(request,response):
 		access=create_access_token(str(user[_D]),user[_G]);response.set_cookie(_Y,access,httponly=_C,secure=_C,samesite=_j,max_age=86400,path=_J);return{_I:_C}
 	except jwt.InvalidTokenError:raise HTTPException(status_code=401,detail=_l)
 @api.post(_A1)
-async def create_booking(payload,user=Depends(get_current_user)):nights=nights_between(payload.checkin,payload.checkout);net=compute_net(payload.gross_price,payload.channel);doc=payload.model_dump();doc.update({_H:nights,_Q:net,_B:user[_A],_b:_F,_P:datetime.now(timezone.utc).isoformat()});result=await db.bookings.insert_one(doc);doc[_A]=str(result.inserted_id);doc.pop(_D,_F);return doc
+async def create_booking(payload,user=Depends(get_current_user)):nights=nights_between(payload.checkin,payload.checkout);net=compute_net(payload.gross_price,payload.channel);doc=payload.model_dump();doc.update({_H:nights,_Q:net,_B:user[_A],_b:_E,_P:datetime.now(timezone.utc).isoformat()});result=await db.bookings.insert_one(doc);doc[_A]=str(result.inserted_id);doc.pop(_D,_E);return doc
 @api.get(_A1)
-async def list_bookings(user=Depends(get_current_user)):docs=await db.bookings.find({_B:user[_A]}).sort(_E,-1).to_list(2000);return[serialize_booking(d)for d in docs]
+async def list_bookings(user=Depends(get_current_user)):docs=await db.bookings.find({_B:user[_A]}).sort(_F,-1).to_list(2000);return[serialize_booking(d)for d in docs]
 @api.put(_A3)
 async def update_booking(bid,payload,user=Depends(get_current_user)):
 	nights=nights_between(payload.checkin,payload.checkout);net=compute_net(payload.gross_price,payload.channel);doc=payload.model_dump();doc.update({_H:nights,_Q:net});r=await db.bookings.update_one({_D:ObjectId(bid),_B:user[_A]},{_c:doc})
@@ -192,17 +198,17 @@ async def ical_import(payload,user=Depends(get_current_user)):
 		uid=str(comp.get('UID',''))
 		if not uid:continue
 		if await db.bookings.find_one({_b:uid,_B:user[_A]}):skipped+=1;continue
-		dtstart=comp.get('DTSTART').dt;dtend=comp.get('DTEND').dt;ci=dtstart.isoformat()if hasattr(dtstart,A)else str(dtstart);co=dtend.isoformat()if hasattr(dtend,A)else str(dtend);summary=str(comp.get('SUMMARY','Ospite iCal'));nights=nights_between(ci,co);gross=payload.default_price*max(nights,1);doc={_S:summary[:40],_T:'(iCal)',_E:ci,_p:co,_R:gross,_d:payload.channel,'notes':str(comp.get('DESCRIPTION','')),_H:nights,_Q:compute_net(gross,payload.channel),_B:user[_A],_b:uid,_P:datetime.now(timezone.utc).isoformat()};await db.bookings.insert_one(doc);imported+=1
+		dtstart=comp.get('DTSTART').dt;dtend=comp.get('DTEND').dt;ci=dtstart.isoformat()if hasattr(dtstart,A)else str(dtstart);co=dtend.isoformat()if hasattr(dtend,A)else str(dtend);summary=str(comp.get('SUMMARY','Ospite iCal'));nights=nights_between(ci,co);gross=payload.default_price*max(nights,1);doc={_S:summary[:40],_T:'(iCal)',_F:ci,_p:co,_R:gross,_d:payload.channel,'notes':str(comp.get('DESCRIPTION','')),_H:nights,_Q:compute_net(gross,payload.channel),_B:user[_A],_b:uid,_P:datetime.now(timezone.utc).isoformat()};await db.bookings.insert_one(doc);imported+=1
 	return{'imported':imported,'skipped':skipped}
 @api.get('/dashboard/stats')
 async def dashboard_stats(user=Depends(get_current_user)):
-	A='revenue';bookings=await db.bookings.find({_B:user[_A]}).to_list(5000);now=datetime.now(timezone.utc).date();year_start=date(now.year,1,1);total_gross=sum(b.get(_R,0)for b in bookings);total_net=sum(b.get(_Q,0)for b in bookings);year_bookings=[b for b in bookings if b.get(_E,'')>=year_start.isoformat()];year_gross=sum(b.get(_R,0)for b in year_bookings);year_net=sum(b.get(_Q,0)for b in year_bookings);year_nights=sum(b.get(_H,0)for b in year_bookings);days_in_year=366 if now.year%4==0 else 365;occupancy=round(year_nights/days_in_year*100,1)if days_in_year else 0;channels={}
+	A='revenue';bookings=await db.bookings.find({_B:user[_A]}).to_list(5000);now=datetime.now(timezone.utc).date();year_start=date(now.year,1,1);total_gross=sum(b.get(_R,0)for b in bookings);total_net=sum(b.get(_Q,0)for b in bookings);year_bookings=[b for b in bookings if b.get(_F,'')>=year_start.isoformat()];year_gross=sum(b.get(_R,0)for b in year_bookings);year_net=sum(b.get(_Q,0)for b in year_bookings);year_nights=sum(b.get(_H,0)for b in year_bookings);days_in_year=366 if now.year%4==0 else 365;occupancy=round(year_nights/days_in_year*100,1)if days_in_year else 0;channels={}
 	for b in year_bookings:ch=b.get(_d,_M);channels[ch]=channels.get(ch,0)+b.get(_R,0)
 	monthly={}
-	for b in year_bookings:m=b.get(_E,'')[:7];monthly[m]=monthly.get(m,0)+b.get(_R,0)
+	for b in year_bookings:m=b.get(_F,'')[:7];monthly[m]=monthly.get(m,0)+b.get(_R,0)
 	monthly_list=[{'month':k,A:round(v,2)}for(k,v)in sorted(monthly.items())];channel_list=[{_d:k,A:round(v,2)}for(k,v)in channels.items()];return{'total_gross':round(total_gross,2),'total_net':round(total_net,2),'year_gross':round(year_gross,2),'year_net':round(year_net,2),'occupancy_pct':occupancy,'total_bookings':len(bookings),'year_bookings':len(year_bookings),'channels':channel_list,'monthly':monthly_list}
 @api.post(_A4)
-async def create_inventory(payload,user=Depends(get_current_user)):doc=payload.model_dump();doc[_B]=user[_A];doc[_q]=datetime.now(timezone.utc).isoformat();r=await db.inventory.insert_one(doc);doc[_A]=str(r.inserted_id);doc.pop(_D,_F);return doc
+async def create_inventory(payload,user=Depends(get_current_user)):doc=payload.model_dump();doc[_B]=user[_A];doc[_q]=datetime.now(timezone.utc).isoformat();r=await db.inventory.insert_one(doc);doc[_A]=str(r.inserted_id);doc.pop(_D,_E);return doc
 @api.get(_A4)
 async def list_inventory(user=Depends(get_current_user)):docs=await db.inventory.find({_B:user[_A]}).sort(_L,1).to_list(1000);return[serialize_booking(d)for d in docs]
 @api.put(_A6)
@@ -216,7 +222,7 @@ async def delete_inventory(iid,user=Depends(get_current_user)):
 	if r.deleted_count==0:raise HTTPException(404,_A5)
 	return{_I:_C}
 @api.post(_A7)
-async def create_expense(payload,user=Depends(get_current_user)):doc=payload.model_dump();doc[_B]=user[_A];doc[_P]=datetime.now(timezone.utc).isoformat();r=await db.expenses.insert_one(doc);doc[_A]=str(r.inserted_id);doc.pop(_D,_F);return doc
+async def create_expense(payload,user=Depends(get_current_user)):doc=payload.model_dump();doc[_B]=user[_A];doc[_P]=datetime.now(timezone.utc).isoformat();r=await db.expenses.insert_one(doc);doc[_A]=str(r.inserted_id);doc.pop(_D,_E);return doc
 @api.get(_A7)
 async def list_expenses(user=Depends(get_current_user)):docs=await db.expenses.find({_B:user[_A]}).sort(_y,1).to_list(1000);return[serialize_booking(d)for d in docs]
 @api.put(_A9)
@@ -246,8 +252,8 @@ async def suggest_price(payload,user=Depends(get_current_user)):
     Istruzioni di calcolo:
     1. Valuta la stagionalità naturale delle date indicate per la località \'{payload.location}\'.
     2. Applica un leggero incremento strategico se le date includono il weekend (venerdì e sabato).
-    3. Incrementa il prezzo in presenza di alta stagione, festività nazionali (Natale, Pasqua, Ferragosto, ponti) o eventi in zona.
-    4. Riduci leggermente o mantieni stabile la tariffa se il contesto occupazione indica bassa richiesta o stanze rimaste vuote sotto data.
+    3. Incrementa il prezzo in presenza di alta stagione, festività nazionali (Natale, Pasqua, Ferragosto, ponti) o events in zona.
+    4. Riduci leggermente o mantieni stabile la tariffa se il contesto occupazione indica bassa richiesta o stanze rimeste vuote sotto data.
 
     Rispondi escludendo tassativamente qualsiasi preambolo o formattazione markdown esterna. Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste identiche chiavi:
     {{
@@ -262,21 +268,21 @@ async def suggest_price(payload,user=Depends(get_current_user)):
 def format_alloggiati_record(b):
 	'Genera un record fixed-width per il portale Alloggiati Web.'
 	try:
-		ci=datetime.fromisoformat(b[_E]).date();nights=str(b.get(_H,1)).zfill(2);tipo=(b.get('guest_type')or'16').ljust(2);cognome=(b.get(_T)or'').upper().ljust(50)[:50];nome=(b.get(_S)or'').upper().ljust(30)[:30];sesso=(b.get('sex')or'M').ljust(1)[:1];dob=b.get(_r,'1980-01-01')
+		ci=datetime.fromisoformat(b[_F]).date();nights=str(b.get(_H,1)).zfill(2);tipo=(b.get('guest_type')or'16').ljust(2);cognome=(b.get(_T)or'').upper().ljust(50)[:50];nome=(b.get(_S)or'').upper().ljust(30)[:30];sesso=(b.get('sex')or'M').ljust(1)[:1];dob=b.get(_r,'1980-01-01')
 		try:dob_d=datetime.fromisoformat(dob).date();dob_str=f"{dob_d.day:02d}/{dob_d.month:02d}/{dob_d.year}"
 		except Exception:dob_str='01/01/1980'
 		comune_nascita=(b.get(_s)or'').upper().ljust(9)[:9];provincia='  ';stato_nascita=(b.get(_AA)or _K).upper().ljust(9)[:9];cittadinanza=(b.get(_AB)or _K).upper().ljust(9)[:9];doc_tipo=(b.get(_AC)or _a).ljust(5)[:5];doc_num=(b.get(_t)or'').upper().ljust(20)[:20];doc_luogo=(b.get(_AD)or'').upper().ljust(9)[:9];arrivo=f"{ci.day:02d}/{ci.month:02d}/{ci.year}";line=f"{tipo}{arrivo}{nights}{cognome}{nome}{sesso}{dob_str}{comune_nascita}{provincia}{stato_nascita}{cittadinanza}{doc_tipo}{doc_num}{doc_luogo}";return line
 	except Exception as e:logger.warning(f"Skip record: {e}");return
 @api.get('/alloggiati/export',response_class=PlainTextResponse)
 async def alloggiati_export(start_date,end_date,user=Depends(get_current_user)):
-	bookings=await db.bookings.find({_B:user[_A],_E:{_u:start_date,_e:end_date}}).to_list(1000);lines=[]
+	bookings=await db.bookings.find({_B:user[_A],_F:{_u:start_date,_e:end_date}}).to_list(1000);lines=[]
 	for b in bookings:
 		line=format_alloggiati_record(b)
 		if line:lines.append(line)
 	content='\r\n'.join(lines);return PlainTextResponse(content,headers={_v:f'attachment; filename="alloggiati_{start_date}_{end_date}.txt"'})
 @api.get('/alloggiati/export-zip')
 async def alloggiati_export_zip(start_date,end_date,user=Depends(get_current_user)):
-	bookings=await db.bookings.find({_B:user[_A],_E:{_u:start_date,_e:end_date}}).to_list(1000);lines=[];photo_files=[]
+	bookings=await db.bookings.find({_B:user[_A],_F:{_u:start_date,_e:end_date}}).to_list(1000);lines=[];photo_files=[]
 	for b in bookings:
 		line=format_alloggiati_record(b)
 		if line:lines.append(line)
@@ -313,11 +319,11 @@ async def public_registration(guest_first_name=Form(...),guest_last_name=Form(..
 		safe=f"doc_{uuid.uuid4().hex}{ext}";content=await f.read()
 		if len(content)>15728640:raise HTTPException(400,f"File {f.filename} troppo grande (max 15MB)")
 		(UPLOAD_DIR/safe).write_bytes(content);photo_paths.append(safe)
-	nights=nights_between(checkin,checkout);doc={_S:guest_first_name.strip(),_T:guest_last_name.strip(),_E:checkin,_p:checkout,_R:.0,_d:channel if channel in CHANNEL_COMMISSION else _M,'notes':'Registrazione ospite via form pubblico',_r:date_of_birth,_s:place_of_birth.strip(),_AA:country_of_birth.strip()or _K,_AB:citizenship.strip()or _K,'sex':sex if sex in('M','F')else'M',_AC:document_type.strip()or _a,_t:document_number.strip(),_AD:document_place.strip(),_H:nights,_Q:.0,_B:owner_id,_b:_F,_AE:photo_paths,'source':'public_form',_P:datetime.now(timezone.utc).isoformat()};result=await db.bookings.insert_one(doc);return{_I:_C,_A:str(result.inserted_id),'photos_uploaded':len(photo_paths)}
+	nights=nights_between(checkin,checkout);doc={_S:guest_first_name.strip(),_T:guest_last_name.strip(),_F:checkin,_p:checkout,_R:.0,_d:channel if channel in CHANNEL_COMMISSION else _M,'notes':'Registrazione ospite via form pubblico',_r:date_of_birth,_s:place_of_birth.strip(),_AA:country_of_birth.strip()or _K,_AB:citizenship.strip()or _K,'sex':sex if sex in('M','F')else'M',_AC:document_type.strip()or _a,_t:document_number.strip(),_AD:document_place.strip(),_H:nights,_Q:.0,_B:owner_id,_b:_E,_AE:photo_paths,'source':'public_form',_P:datetime.now(timezone.utc).isoformat()};result=await db.bookings.insert_one(doc);return{_I:_C,_A:str(result.inserted_id),'photos_uploaded':len(photo_paths)}
 @api.get('/alloggiati/preview')
 async def alloggiati_preview(start_date,end_date,user=Depends(get_current_user)):
-	bookings=await db.bookings.find({_B:user[_A],_E:{_u:start_date,_e:end_date}}).to_list(1000);records=[]
-	for b in bookings:line=format_alloggiati_record(b);records.append({'guest':f"{b.get(_S,"")} {b.get(_T,"")}",_E:b.get(_E),_H:b.get(_H),'valid':line is not _F,'line_preview':line[:80]+'...'if line and len(line)>80 else line,'missing':[k for k in[_r,_s,_t]if not b.get(k)]})
+	bookings=await db.bookings.find({_B:user[_A],_F:{_u:start_date,_e:end_date}}).to_list(1000);records=[]
+	for b in bookings:line=format_alloggiati_record(b);records.append({'guest':f"{b.get(_S,"")} {b.get(_T,"")}",_F:b.get(_F),_H:b.get(_H),'valid':line is not _E,'line_preview':line[:80]+'...'if line and len(line)>80 else line,'missing':[k for k in[_r,_s,_t]if not b.get(k)]})
 	return{'total':len(bookings),'records':records}
 class Ross1000Settings(BaseModel):codice_struttura:str;camere_disponibili:int;letti_disponibili:int
 @api.get(_AG)
@@ -331,7 +337,7 @@ async def _load_ross_settings(user_id):
 	doc=await db.settings.find_one({_B:user_id,_f:_g})
 	if not doc or not doc.get(_N):raise HTTPException(400,'Configura prima il codice struttura e le camere/letti disponibili in Impostazioni ROSS 1000.')
 	return doc
-async def _month_bookings(user_id,year,month):_,last_day=__import__('calendar').monthrange(year,month);month_start=date(year,month,1).isoformat();month_end=date(year,month,last_day).isoformat();return await db.bookings.find({_B:user_id,_E:{_e:month_end},_p:{'$gt':month_start}}).to_list(2000)
+async def _month_bookings(user_id,year,month):_,last_day=__import__('calendar').monthrange(year,month);month_start=date(year,month,1).isoformat();month_end=date(year,month,last_day).isoformat();return await db.bookings.find({_B:user_id,_F:{_e:month_end},_p:{'$gt':month_start}}).to_list(2000)
 @api.get('/ross1000/preview')
 async def ross_preview(year,month,user=Depends(get_current_user)):settings=await _load_ross_settings(user[_A]);bookings=await _month_bookings(user[_A],year,month);stats=compute_month_stats(year,month,bookings,settings[_U]);stats[_N]=settings[_N];return stats
 @api.get('/ross1000/export-xml',response_class=PlainTextResponse)
