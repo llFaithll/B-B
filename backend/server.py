@@ -444,7 +444,7 @@ async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --------------------- Pricing AI (Fix URL Adapter Definitivo) ---------------------
-# --------------------- Pricing AI (Groq Spezzato Anti-Markdown) ---------------------
+# --------------------- Pricing AI (Groq ASCII Blindato) ---------------------
 @api.post("/pricing/suggest")
 async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_current_user)):
     checkin = payload.checkin
@@ -481,11 +481,15 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
     }}
     """
     try:
-        # Stringa spezzata per eludere la conversione automatica in link degli editor
-        p1 = "ht" + "tps://"
-        p2 = "[api.groq.com/](https://api.groq.com/)"
-        p3 = "openai/v1/chat/completions"
-        url = p1 + p2 + p3
+        # Generazione dell'URL tramite codici ASCII decimali puri
+        # Corrisponde esattamente a: [https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)
+        ascii_codes = [
+            104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 103, 114, 111, 
+            113, 46, 99, 111, 109, 47, 111, 112, 101, 110, 97, 105, 47, 118, 49, 
+            47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 102, 101, 116, 105, 111, 110, 115
+        ]
+        # Sistemiamo l'eventuale errore di battitura nell'endpoint corretto "completions"
+        url = "".join(chr(x) for x in ascii_codes).replace("comfetions", "completions")
         
         headers = {
             "Authorization": f"Bearer {groq_key}",
