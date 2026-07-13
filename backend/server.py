@@ -444,14 +444,13 @@ async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # --------------------- Pricing AI (Fix URL Adapter Definitivo) ---------------------
-# --------------------- Pricing AI (Switch a Groq Ultra-Stabile) ---------------------
+# --------------------- Pricing AI (Groq Spezzato Anti-Markdown) ---------------------
 @api.post("/pricing/suggest")
 async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_current_user)):
     checkin = payload.checkin
     checkout = payload.checkout
     nights = nights_between(checkin, checkout)
     
-    # Recupera la chiave di Groq dalla stessa variabile d'ambiente
     groq_key = os.environ.get("GEMINI_API_KEY", "").strip()
     for c in ["[", "]", "(", ")", "'", '"', " "]:
         groq_key = groq_key.replace(c, "")
@@ -482,8 +481,12 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
     }}
     """
     try:
-        # Endpoint ufficiale compatibile con OpenAI di Groq
-        url = "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)"
+        # Stringa spezzata per eludere la conversione automatica in link degli editor
+        p1 = "ht" + "tps://"
+        p2 = "[api.groq.com/](https://api.groq.com/)"
+        p3 = "openai/v1/chat/completions"
+        url = p1 + p2 + p3
+        
         headers = {
             "Authorization": f"Bearer {groq_key}",
             "Content-Type": "application/json"
@@ -503,7 +506,6 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
         res_json = response.json()
         ai_text = res_json["choices"][0]["message"]["content"].strip()
         
-        # Pulizia protettiva del JSON
         if ai_text.startswith("```"):
             ai_text = ai_text.split("```")[1]
             if ai_text.startswith("json"):
