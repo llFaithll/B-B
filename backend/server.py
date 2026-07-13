@@ -532,6 +532,122 @@ async def suggest_price(payload: PricingSuggestIn, user: dict = Depends(get_curr
             "total_suggested": round(suggested * nights, 2),
             "reasoning": f"Servizio IA momentaneamente non disponibile. (Dettaglio: {str(e)[:40]})"
         }
+        # --------------------- MODELS TASSA E RICEVUTA ---------------------
+class TaxSettingsIn(BaseModel):
+    fee_per_night: float = 3.50  # Es. 3.50€ a Roma
+    max_nights: int = 10         # Massimo n notti consecutive esentate oltre
+    kids_under_age: int = 10     # Esenzione bambini sotto i X anni
+
+# --------------------- IMPOSTAZIONI TASSA DI SOGGIORNO ---------------------
+@api.get("/settings/tourist-tax")
+async def get_tax_settings(user: dict = Depends(get_current_user)):
+    doc = await db.settings.find_one({"owner_id": user["id"], "kind": "tourist_tax"})
+    if not doc:
+        return {"fee_per_night": 3.50, "max_nights": 10, "kids_under_age": 10}
+    return {
+        "fee_per_night": doc.get("fee_per_night", 3.50),
+        "max_nights": doc.get("max_nights", 10),
+        "kids_under_age": doc.get("kids_under_age", 10)
+    }
+
+@api.post("/settings/tourist-tax")
+async def save_tax_settings(payload: TaxSettingsIn, user: dict = Depends(get_current_user)):
+    await db.settings.update_one(
+        {"owner_id": user["id"], "kind": "tourist_tax"},
+        {"$set": {**payload.model_dump(), "owner_id": user["id"], "kind": "tourist_tax", "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    return {"ok": True}
+
+# --------------------- GENERAZIONE RICEVUTA PDF ---------------------
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+
+@api.get("/bookings/{bid}/receipt-pdf")
+async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int = 0, user: dict = Depends(get_current_user)):
+    booking = await db.bookings.find_one({"_id": ObjectId(bid), "owner_id": user["id"]})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Prenotazione non trovata")
+        
+    tax_settings = await db.settings.find_one({"owner_id": user["id"], "kind": "tourist_tax"})
+    fee = tax_settings.get("fee_per_night", 3.50) if tax_settings else 3.50
+    max_n = tax_settings.get("max_nights", 10) if tax_settings else 10
+    
+    # Calcolo Tassa di Soggiorno applicando i limiti delle notti tassabili
+    nights = min(booking.get("nights", 1), max_n)
+    adults_count = max(guests_count - kids_count, 1)
+    total_tax = round(fee * nights * adults_count, 2)
+    
+    gross_stay = booking.get("gross_price", 0.0)
+    grand_total = round(gross_stay + total_tax, 2)
+    
+    # Controllo Marca da Bollo italiana (2€ se superi i 77.47€)
+    stamp_duty = 2.0 if gross_stay > 77.47 else 0.0
+
+    # Creazione del PDF in memoria tramite ReportLab
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+    styles = getSampleStyleSheet()
+    
+    # Stili personalizzati per rendere la ricevuta elegante ed ordinata
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=22, textColor=colors.HexColor("#1b4332"), spaceAfter=15)
+    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=10, leading=14)
+    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontSize=10, fontName="Helvetica-Bold")
+    
+    story = []
+    
+    # Intestazione Struttura Ricettiva
+    story.append(Paragraph("RICEVUTA NON FISCALE", title_style))
+    story.append(Paragraph(f"<b>Struttura:</b> Casa B&B<br/><b>Gestore:</b> {user.get('name')}<br/><b>Email:</b> {user.get('email')}", normal_style))
+    story.append(Spacer(1, 20))
+    
+    # Info Ospite e Soggiorno
+    guest_name = f"{booking.get('guest_first_name', '')} {booking.get('guest_last_name', '')}".upper()
+    story.append(Paragraph(f"<b>Ricevuta n°:</b> {booking.get('_id')[:8].upper()} / {datetime.now().year}", normal_style))
+    story.append(Paragraph(f"<b>Data emissione:</b> {date.today().strftime('%d/%m/%Y')}", normal_style))
+    story.append(Paragraph(f"<b>Ospite principale:</b> {guest_name}", normal_style))
+    story.append(Paragraph(f"<b>Periodo:</b> dal {booking.get('checkin')} al {booking.get('checkout')} ({booking.get('nights')} notti)", normal_style))
+    story.append(Spacer(1, 20))
+    
+    # Tabella dei Costi
+    data = [
+        [Paragraph("<b>Descrizione Servizio</b>", normal_style), Paragraph("<b>Importo</b>", normal_style)],
+        [Paragraph(f"Pernottamento breve ({booking.get('nights')} notti, {guests_count} ospiti)", normal_style), Paragraph(f"{gross_stay:.2f} €", normal_style)],
+        [Paragraph(f"Imposta di Soggiorno Comunale ({nights} notti tassate per {adults_count} adulti)", normal_style), Paragraph(f"{total_tax:.2f} €", normal_style)]
+    ]
+    
+    if stamp_duty > 0:
+        data.append([Paragraph("Imposta di bollo assolta sull'originale", normal_style), Paragraph(f"{stamp_duty:.2f} €", normal_style)])
+        grand_total = round(grand_total + stamp_duty, 2)
+        
+    data.append([Paragraph("<b>TOTALE COMPLESSIVO</b>", bold_style), Paragraph(f"<b>{grand_total:.2f} €</b>", bold_style)])
+    
+    t = Table(data, colWidths=[400, 100])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (1, 0), colors.HexColor("#e9ecef")),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor("#212529")),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('LINEBELOW', (0, 0), (-1, -2), 0.5, colors.lightgrey),
+        ('LINEABOVE', (0, -1), (1, -1), 1, colors.HexColor("#1b4332")),
+    ]))
+    
+    story.append(t)
+    story.append(Spacer(1, 30))
+    
+    # Dicitura esenzione IVA (Obbligatoria per le locazioni turistiche / B&B non imprenditoriali)
+    disclaimer = "Operazione effettuata da privato fuori dal campo di applicazione dell'IVA ai sensi dell'art. 4 del D.P.R. 633/1972 e successive modificazioni."
+    story.append(Paragraph(f"<font size=8 color='gray'>{disclaimer}</font>", normal_style))
+    
+    doc.build(story)
+    buf.seek(0)
+    
+    filename = f"ricevuta_{booking.get('guest_last_name', 'ospite')}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 # --------------------- Alloggiati Web Export ---------------------
 def format_alloggiati_record(b: dict) -> Optional[str]:
     try:
