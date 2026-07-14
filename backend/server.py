@@ -30,11 +30,9 @@ from ross1000 import build_movimenti_xml, compute_month_stats
 
 # --------------------- Config ---------------------
 JWT_ALGORITHM = "HS256"
-# Prevenzione Crash Etsy: se il cliente dimentica il JWT_SECRET su Render, ne generiamo uno al volo sicuro
+# Se JWT_SECRET non è configurato su Render, evitiamo il crash generandone uno sicuro al volo
 JWT_SECRET = os.environ.get("JWT_SECRET") or secrets.token_hex(32)
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
-
-# Prevenzione Crash Refuso Emergent: usiamo os.getenv per evitare il KeyError all'avvio
 EMERGENT_LLM_KEY = os.getenv("EMERGENT_LLM_KEY", "default_placeholder")
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -74,10 +72,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="B&B Manager", lifespan=lifespan)
 
-# Abilitazione Globale dei CORS: Consente a qualsiasi URL del frontend (inclusi i domini dei clienti su Netlify) di comunicare con questo backend
+# Configurazione CORS dinamica e robusta per la vendita su Etsy
+origins = [
+    "http://localhost:3000",
+    "https://gestionale-bandb.netlify.app",
+]
+if os.environ.get("FRONTEND_URL"):
+    origins.append(os.environ.get("FRONTEND_URL").rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
+    # Questa regex risolve istantaneamente per te e per tutti i clienti Etsy consentendo
+    # la comunicazione da qualunque dominio o sotto-dominio ospitato su Netlify
+    allow_origin_regex="https://.*\.netlify\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -733,4 +741,95 @@ async def public_property_info():
 async def public_registration(
     guest_first_name: str = Form(...), guest_last_name: str = Form(...),
     checkin: str = Form(...), checkout: str = Form(...), channel: str = Form("Direct"),
-    document_
+    document_number: str = Form(...), date_of_birth: str = Form(...), place_of_birth: str = Form(...),
+    country_of_birth: str = Form("ITALIA"), citizenship: str = Form("ITALIA"), sex: str = Form("M"),
+    document_type: str = Form("IDENT"), document_place: str = Form(""), photos: List[UploadFile] = File(default=[]),
+):
+    proprietario = await db.users.find_one({"email": "giuseppesica01@gmail.com"})
+    if not proprietario:
+        raise HTTPException(400, "Struttura non configurata")
+    owner_id = str(proprietario["_id"])
+
+    photo_paths = []
+    for f in photos or []:
+        if not f.filename: continue
+        ext = Path(f.filename).suffix.lower() or ".jpg"
+        if ext not in [".jpg", ".jpeg", ".png", ".webp", ".pdf", ".heic"]: continue
+        safe = f"doc_{uuid.uuid4().hex}{ext}"
+        content = await f.read()
+        if len(content) > 15 * 1024 * 1024:
+            raise HTTPException(400, f"File {f.filename} troppo grande (max 15MB)")
+        (UPLOAD_DIR / safe).write_bytes(content)
+        photo_paths.append(safe)
+
+    nights = nights_between(checkin, checkout)
+    doc = {
+        "guest_first_name": guest_first_name.strip(), "guest_last_name": guest_last_name.strip(),
+        "checkin": checkin, "checkout": checkout, "gross_price": 0.0, "channel": channel,
+        "date_of_birth": date_of_birth, "place_of_birth": place_of_birth.strip(),
+        "country_of_birth": country_of_birth, "citizenship": citizenship, "sex": sex,
+        "document_type": document_type, "document_number": document_number, "document_place": document_place,
+        "nights": nights, "net_revenue": 0.0, "owner_id": owner_id, "photo_paths": photo_paths,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    result = await db.bookings.insert_one(doc)
+    return {"ok": True, "id": str(result.inserted_id), "photos_uploaded": len(photo_paths)}
+
+@api.get("/alloggiati/preview")
+async def alloggiati_preview(start_date: str, end_date: str, user: dict = Depends(get_current_user)):
+    bookings = await db.bookings.find({"owner_id": user["id"], "checkin": {"$gte": start_date, "$lte": end_date}}).to_list(1000)
+    records = []
+    for b in bookings:
+        line = format_alloggiati_record(b)
+        records.append({
+            "guest": f"{b.get('guest_first_name', '')} {b.get('guest_last_name', '')}",
+            "checkin": b.get("checkin"), "nights": b.get("nights"), "valid": line is not None,
+            "line_preview": line[:80] + "..." if line and len(line) > 80 else line,
+            "missing": [k for k in ["date_of_birth", "place_of_birth", "document_number"] if not b.get(k)],
+        })
+    return {"total": len(bookings), "records": records}
+
+# --------------------- ROSS 1000 Lazio (ISTAT) ---------------------
+class Ross1000Settings(BaseModel):
+    codice_struttura: str
+    camere_disponibili: int
+    letti_disponibili: int
+
+@api.get("/ross1000/settings")
+async def get_ross_settings(user: dict = Depends(get_current_user)):
+    doc = await db.settings.find_one({"owner_id": user["id"], "kind": "ross1000"})
+    if not doc:
+        return {"codice_struttura": "", "camere_disponibili": 1, "letti_disponibili": 2}
+    return {"codice_struttura": doc.get("codice_struttura", ""), "camere_disponibili": doc.get("camere_disponibili", 1), "letti_disponibili": doc.get("letti_disponibili", 2)}
+
+@api.post("/ross1000/settings")
+async def save_ross_settings(payload: Ross1000Settings, user: dict = Depends(get_current_user)):
+    await db.settings.update_one({"owner_id": user["id"], "kind": "ross1000"}, {"$set": {**payload.model_dump(), "owner_id": user["id"], "kind": "ross1000", "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    return {"ok": True}
+
+async def _load_ross_settings(user_id: str) -> dict:
+    doc = await db.settings.find_one({"owner_id": user_id, "kind": "ross1000"})
+    if not doc or not doc.get("codice_struttura"):
+        raise HTTPException(400, "Configura prima il codice struttura in Impostazioni ROSS 1000.")
+    return doc
+
+async def _month_bookings(user_id: str, year: int, month: int) -> list:
+    _, last_day = __import__("calendar").monthrange(year, month)
+    return await db.bookings.find({"owner_id": user_id, "checkin": {"$lte": date(year, month, last_day).isoformat()}, "checkout": {"$gt": date(year, month, 1).isoformat()}}).to_list(2000)
+
+@api.get("/ross1000/preview")
+async def ross_preview(year: int, month: int, user: dict = Depends(get_current_user)):
+    settings = await _load_ross_settings(user["id"])
+    bookings = await _month_bookings(user["id"], year, month)
+    stats = compute_month_stats(year, month, bookings, settings["camere_disponibili"])
+    stats["codice_struttura"] = settings["codice_struttura"]
+    return stats
+
+@api.get("/ross1000/export-xml", response_class=PlainTextResponse)
+async def ross_export_xml(year: int, month: int, user: dict = Depends(get_current_user)):
+    settings = await _load_ross_settings(user["id"])
+    bookings = await _month_bookings(user["id"], year, month)
+    xml = build_movimenti_xml(codice_struttura=settings["codice_struttura"], year=year, month=month, bookings=bookings, camere_disponibili=settings["camere_disponibili"], letti_disponibili=settings["letti_disponibili"])
+    return PlainTextResponse(xml, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="ross1000_{year}_{month:02d}.xml"'})
+
+app.include_router(api)
