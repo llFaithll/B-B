@@ -784,10 +784,21 @@ async def get_upload(filename: str, user: dict = Depends(get_current_user)):
 # --------------------- Public Guest Registration (VERSIONE DINAMICA MULTI-OSPITE) ---------------------
 @api.get("/public/property-info")
 async def public_property_info():
-    admin = await db.users.find_one({"email": "giuseppesica01@gmail.com"})
+    try:
+        tax_settings = await db.settings.find_one({"kind": "tourist_tax"})
+        if tax_settings and tax_settings.get("property_name"):
+            return {"name": tax_settings.get("property_name"), "active": True}
+    except Exception:
+        pass
+        
+    admin = await db.users.find_one({"role": "admin"})
+    if not admin:
+        admin = await db.users.find_one()
+        
     if not admin:
         raise HTTPException(404, "Struttura non configurata")
-    return {"name": "Casa B&B", "active": True}
+        
+    return {"name": admin.get("name", "Casa B&B"), "active": True}
 
 @api.post("/public/registration")
 async def public_registration(
@@ -799,16 +810,20 @@ async def public_registration(
     document_type: str = Form("IDENT"), document_place: str = Form(""),
     additional_guests_json: Optional[str] = Form(default="[]")
 ):
-    proprietario = await db.users.find_one({"email": "giuseppesica01@gmail.com"})
+    # Identificazione dinamica dell'account proprietario per salvare la registrazione
+    proprietario = await db.users.find_one({"role": "admin"})
+    if not proprietario:
+        proprietario = await db.users.find_one()
+        
     if not proprietario:
         raise HTTPException(400, "Struttura non configurata")
     owner_id = str(proprietario["_id"])
 
-    # Leggiamo i file multipart inviati in modo dinamico per mappare foto principale ed aggiuntive
+    # Lettura flessibile dei file binari multipart
     form_data = await request.form()
     photo_paths = []
 
-    # 1. Salvataggio foto dell'ospite principale (Capogruppo)
+    # 1. Salvataggio della foto del Capogruppo
     main_photo = form_data.get("main_photo")
     if main_photo and hasattr(main_photo, "filename") and main_photo.filename:
         ext = Path(main_photo.filename).suffix.lower() or ".jpg"
@@ -818,7 +833,7 @@ async def public_registration(
             (UPLOAD_DIR / safe).write_bytes(content)
             photo_paths.append(safe)
 
-    # 2. Parsing e salvataggio sequenziale di ciascun occupante extra
+    # 2. Parsing sequenziale e salvataggio degli altri componenti del gruppo
     processed_additional_guests = []
     try:
         guests_list = json.loads(additional_guests_json)
@@ -827,7 +842,6 @@ async def public_registration(
 
     for idx, guest_data in enumerate(guests_list):
         guest_photos = []
-        # Cerchiamo se c'è un file associato a questo specifico indice di ospite aggiuntivo
         additional_photo = form_data.get(f"additional_photo_{idx}")
         if additional_photo and hasattr(additional_photo, "filename") and additional_photo.filename:
             ext = Path(additional_photo.filename).suffix.lower() or ".jpg"
@@ -835,10 +849,9 @@ async def public_registration(
                 safe = f"doc_{uuid.uuid4().hex}{ext}"
                 content = await additional_photo.read()
                 (UPLOAD_DIR / safe).write_bytes(content)
-                photo_paths.append(safe)      # Manteniamo traccia nell'array globale dei file
-                guest_photos.append(safe)     # Associamo la foto all'ospite specifico
+                photo_paths.append(safe)      
+                guest_photos.append(safe)     
 
-        # Ristrutturiamo l'anagrafica del singolo ospite aggiuntivo
         processed_additional_guests.append({
             "guest_first_name": guest_data.get("guest_first_name", "").strip(),
             "guest_last_name": guest_data.get("guest_last_name", "").strip(),
@@ -854,10 +867,10 @@ async def public_registration(
             "photo_paths": guest_photos
         })
 
-    # Calcolo delle notti
+    # Calcolo automatico della durata del pernottamento
     nights = nights_between(checkin, checkout)
     
-    # Costruzione del documento unico da salvare su MongoDB
+    # Inserimento dei record all'interno della medesima transazione MongoDB
     doc = {
         "guest_first_name": guest_first_name.strip(), 
         "guest_last_name": guest_last_name.strip(),
@@ -876,8 +889,8 @@ async def public_registration(
         "nights": nights, 
         "net_revenue": 0.0, 
         "owner_id": owner_id, 
-        "photo_paths": photo_paths,               # Tutte le foto salvate per questa prenotazione
-        "additional_guests": processed_additional_guests,  # Sotto-array ordinato degli altri occupanti
+        "photo_paths": photo_paths,               
+        "additional_guests": processed_additional_guests,  
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     
