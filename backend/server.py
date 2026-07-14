@@ -781,7 +781,7 @@ async def get_upload(filename: str, user: dict = Depends(get_current_user)):
         raise HTTPException(404, "File non trovato")
     return FileResponse(str(fpath))
 
-# --------------------- Public Guest Registration ---------------------
+# --------------------- Public Guest Registration (VERSIONE DINAMICA MULTI-OSPITE) ---------------------
 @api.get("/public/property-info")
 async def public_property_info():
     admin = await db.users.find_one({"email": "giuseppesica01@gmail.com"})
@@ -791,41 +791,103 @@ async def public_property_info():
 
 @api.post("/public/registration")
 async def public_registration(
+    request: Request,
     guest_first_name: str = Form(...), guest_last_name: str = Form(...),
     checkin: str = Form(...), checkout: str = Form(...), channel: str = Form("Direct"),
     document_number: str = Form(...), date_of_birth: str = Form(...), place_of_birth: str = Form(...),
     country_of_birth: str = Form("ITALIA"), citizenship: str = Form("ITALIA"), sex: str = Form("M"),
-    document_type: str = Form("IDENT"), document_place: str = Form(""), photos: List[UploadFile] = File(default=[]),
+    document_type: str = Form("IDENT"), document_place: str = Form(""),
+    additional_guests_json: Optional[str] = Form(default="[]")
 ):
     proprietario = await db.users.find_one({"email": "giuseppesica01@gmail.com"})
     if not proprietario:
         raise HTTPException(400, "Struttura non configurata")
     owner_id = str(proprietario["_id"])
 
+    # Leggiamo i file multipart inviati in modo dinamico per mappare foto principale ed aggiuntive
+    form_data = await request.form()
     photo_paths = []
-    for f in photos or []:
-        if not f.filename: continue
-        ext = Path(f.filename).suffix.lower() or ".jpg"
-        if ext not in [".jpg", ".jpeg", ".png", ".webp", ".pdf", ".heic"]: continue
-        safe = f"doc_{uuid.uuid4().hex}{ext}"
-        content = await f.read()
-        if len(content) > 15 * 1024 * 1024:
-            raise HTTPException(400, f"File {f.filename} troppo grande (max 15MB)")
-        (UPLOAD_DIR / safe).write_bytes(content)
-        photo_paths.append(safe)
 
+    # 1. Salvataggio foto dell'ospite principale (Capogruppo)
+    main_photo = form_data.get("main_photo")
+    if main_photo and hasattr(main_photo, "filename") and main_photo.filename:
+        ext = Path(main_photo.filename).suffix.lower() or ".jpg"
+        if ext in [".jpg", ".jpeg", ".png", ".webp", ".pdf", ".heic"]:
+            safe = f"doc_{uuid.uuid4().hex}{ext}"
+            content = await main_photo.read()
+            (UPLOAD_DIR / safe).write_bytes(content)
+            photo_paths.append(safe)
+
+    # 2. Parsing e salvataggio sequenziale di ciascun occupante extra
+    processed_additional_guests = []
+    try:
+        guests_list = json.loads(additional_guests_json)
+    except Exception:
+        guests_list = []
+
+    for idx, guest_data in enumerate(guests_list):
+        guest_photos = []
+        # Cerchiamo se c'è un file associato a questo specifico indice di ospite aggiuntivo
+        additional_photo = form_data.get(f"additional_photo_{idx}")
+        if additional_photo and hasattr(additional_photo, "filename") and additional_photo.filename:
+            ext = Path(additional_photo.filename).suffix.lower() or ".jpg"
+            if ext in [".jpg", ".jpeg", ".png", ".webp", ".pdf", ".heic"]:
+                safe = f"doc_{uuid.uuid4().hex}{ext}"
+                content = await additional_photo.read()
+                (UPLOAD_DIR / safe).write_bytes(content)
+                photo_paths.append(safe)      # Manteniamo traccia nell'array globale dei file
+                guest_photos.append(safe)     # Associamo la foto all'ospite specifico
+
+        # Ristrutturiamo l'anagrafica del singolo ospite aggiuntivo
+        processed_additional_guests.append({
+            "guest_first_name": guest_data.get("guest_first_name", "").strip(),
+            "guest_last_name": guest_data.get("guest_last_name", "").strip(),
+            "date_of_birth": guest_data.get("date_of_birth", ""),
+            "place_of_birth": guest_data.get("place_of_birth", "").strip(),
+            "country_of_birth": guest_data.get("country_of_birth", "ITALIA"),
+            "citizenship": guest_data.get("citizenship", "ITALIA"),
+            "sex": guest_data.get("sex", "M"),
+            "document_type": guest_data.get("document_type", "IDENT"),
+            "document_number": guest_data.get("document_number", "").strip(),
+            "document_place": guest_data.get("document_place", ""),
+            "guest_type": guest_data.get("guest_type", "17"),
+            "photo_paths": guest_photos
+        })
+
+    # Calcolo delle notti
     nights = nights_between(checkin, checkout)
+    
+    # Costruzione del documento unico da salvare su MongoDB
     doc = {
-        "guest_first_name": guest_first_name.strip(), "guest_last_name": guest_last_name.strip(),
-        "checkin": checkin, "checkout": checkout, "gross_price": 0.0, "channel": channel,
-        "date_of_birth": date_of_birth, "place_of_birth": place_of_birth.strip(),
-        "country_of_birth": country_of_birth, "citizenship": citizenship, "sex": sex,
-        "document_type": document_type, "document_number": document_number, "document_place": document_place,
-        "nights": nights, "net_revenue": 0.0, "owner_id": owner_id, "photo_paths": photo_paths,
+        "guest_first_name": guest_first_name.strip(), 
+        "guest_last_name": guest_last_name.strip(),
+        "checkin": checkin, 
+        "checkout": checkout, 
+        "gross_price": 0.0, 
+        "channel": channel,
+        "date_of_birth": date_of_birth, 
+        "place_of_birth": place_of_birth.strip(),
+        "country_of_birth": country_of_birth, 
+        "citizenship": citizenship, 
+        "sex": sex,
+        "document_type": document_type, 
+        "document_number": document_number, 
+        "document_place": document_place,
+        "nights": nights, 
+        "net_revenue": 0.0, 
+        "owner_id": owner_id, 
+        "photo_paths": photo_paths,               # Tutte le foto salvate per questa prenotazione
+        "additional_guests": processed_additional_guests,  # Sotto-array ordinato degli altri occupanti
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    
     result = await db.bookings.insert_one(doc)
-    return {"ok": True, "id": str(result.inserted_id), "photos_uploaded": len(photo_paths)}
+    return {
+        "ok": True, 
+        "id": str(result.inserted_id), 
+        "photos_uploaded": len(photo_paths),
+        "additional_guests_count": len(processed_additional_guests)
+    }
 
 @api.get("/alloggiati/preview")
 async def alloggiati_preview(start_date: str, end_date: str, user: dict = Depends(get_current_user)):
@@ -884,5 +946,5 @@ async def ross_export_xml(year: int, month: int, user: dict = Depends(get_curren
     xml = build_movimenti_xml(codice_struttura=settings["codice_struttura"], year=year, month=month, bookings=bookings, camere_disponibili=settings["camere_disponibili"], letti_disponibili=settings["letti_disponibili"])
     return PlainTextResponse(xml, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="ross1000_{year}_{month:02d}.xml"'})
 
-# Registrazione conclusiva essenziale per attivare tutte le rotte API su FastAPI
+# Inclusione formale conclusiva di tutte le rotte API su FastAPI
 app.include_router(api)
