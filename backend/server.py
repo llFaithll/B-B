@@ -568,7 +568,7 @@ async def save_tax_settings(payload: TaxSettingsIn, user: dict = Depends(get_cur
     )
     return {"ok": True}
 
-# --------------------- GENERAZIONE RICEVUTA PDF ---------------------
+# --------------------- GENERAZIONE RICEVUTA PDF (VERSIONE BLINDATA ED INDISTRUTTIBILE) ---------------------
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -576,32 +576,43 @@ from reportlab.lib import colors
 
 @api.get("/bookings/{bid}/receipt-pdf")
 async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int = 0, user: dict = Depends(get_current_user)):
-    booking = await db.bookings.find_one({"_id": ObjectId(bid), "owner_id": user["id"]})
+    try:
+        booking = await db.bookings.find_one({"_id": ObjectId(bid), "owner_id": user["id"]})
+    except Exception as e:
+        logger.error(f"Errore MongoDB nel recupero booking: {e}")
+        raise HTTPException(status_code=500, detail="Errore nel recupero della prenotazione dal database")
+
     if not booking:
         raise HTTPException(status_code=404, detail="Prenotazione non trovata")
         
-    # Recupero sicuro delle impostazioni della tassa di soggiorno con valori di default robusti
-    tax_settings = await db.settings.find_one({"owner_id": user["id"], "kind": "tourist_tax"})
-    if tax_settings:
-        fee = float(tax_settings.get("fee_per_night", 3.50))
-        max_n = int(tax_settings.get("max_nights", 10))
-    else:
+    # 1. Recupero ultra-sicuro delle impostazioni con conversioni esplicite dei tipi di dato
+    try:
+        tax_settings = await db.settings.find_one({"owner_id": user["id"], "kind": "tourist_tax"})
+        if tax_settings:
+            fee = float(tax_settings.get("fee_per_night", 3.50))
+            max_n = int(tax_settings.get("max_nights", 10))
+        else:
+            fee = 3.50
+            max_n = 10
+    except Exception as e:
+        logger.warning(f"Errore recupero settings tassa, uso default: {e}")
         fee = 3.50
         max_n = 10
     
-    # Conversione e controllo di sicurezza sulle notti della prenotazione
+    # 2. Conversione forzata di "nights" per evitare crash se salvato come stringa o nullo in MongoDB
     try:
-        booking_nights = int(booking.get("nights", 1))
+        raw_nights = booking.get("nights")
+        booking_nights = int(raw_nights) if raw_nights is not None else 1
     except (ValueError, TypeError):
         booking_nights = 1
         
     if booking_nights <= 0:
         booking_nights = 1
         
-    # Calcolo Tassa di Soggiorno applicando i limiti delle notti tassabili
+    # Calcolo Notti Tassabili
     nights = min(booking_nights, max_n)
     
-    # Prevenzione valori negativi o errati per gli ospiti
+    # 3. Conversione forzata degli ospiti passati dal frontend
     try:
         g_count = max(int(guests_count), 1)
         k_count = max(int(kids_count), 0)
@@ -612,252 +623,26 @@ async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int 
     adults_count = max(g_count - k_count, 1)
     total_tax = round(fee * nights * adults_count, 2)
     
-    # Conversione sicura del prezzo lordo della camera
+    # 4. Conversione forzata del prezzo lordo
     try:
         gross_stay = float(booking.get("gross_price", 0.0))
     except (ValueError, TypeError):
         gross_stay = 0.0
         
     grand_total = round(gross_stay + total_tax, 2)
-    
-    # Controllo Marca da Bollo italiana (2€ se superi i 77.47€)
     stamp_duty = 2.0 if gross_stay > 77.47 else 0.0
 
-    # Creazione del PDF in memoria tramite ReportLab
-    buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
-    styles = getSampleStyleSheet()
-    
-    # Stili personalizzati per rendere la ricevuta elegante ed ordinata
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=22, textColor=colors.HexColor("#1b4332"), spaceAfter=15)
-    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=10, leading=14)
-    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontSize=10, fontName="Helvetica-Bold")
-    
-    story = []
-    
-    # Intestazione Struttura Ricettiva
-    story.append(Paragraph("RICEVUTA NON FISCALE", title_style))
-    story.append(Paragraph(f"<b>Struttura:</b> Casa B&B<br/><b>Gestore:</b> {user.get('name')}<br/><b>Email:</b> {user.get('email')}", normal_style))
-    story.append(Spacer(1, 20))
-    
-    # Info Ospite e Soggiorno
-    guest_name = f"{booking.get('guest_first_name', '')} {booking.get('guest_last_name', '')}".upper()
-    story.append(Paragraph(f"<b>Ricevuta n°:</b> {booking.get('_id')[:8].upper()} / {datetime.now().year}", normal_style))
-    story.append(Paragraph(f"<b>Data emissione:</b> {date.today().strftime('%d/%m/%Y')}", normal_style))
-    story.append(Paragraph(f"<b>Ospite principale:</b> {guest_name}", normal_style))
-    story.append(Paragraph(f"<b>Periodo:</b> dal {booking.get('checkin')} al {booking.get('checkout')} ({booking.get('nights')} notti)", normal_style))
-    story.append(Spacer(1, 20))
-    
-    # Tabella dei Costi
-    data = [
-        [Paragraph("<b>Descrizione Servizio</b>", normal_style), Paragraph("<b>Importo</b>", normal_style)],
-        [Paragraph(f"Pernottamento breve ({booking.get('nights')} notti, {guests_count} ospiti)", normal_style), Paragraph(f"{gross_stay:.2f} €", normal_style)],
-        [Paragraph(f"Imposta di Soggiorno Comunale ({nights} notti tassate per {adults_count} adulti)", normal_style), Paragraph(f"{total_tax:.2f} €", normal_style)]
-    ]
-    
-    if stamp_duty > 0:
-        data.append([Paragraph("Imposta di bollo assolta sull'originale", normal_style), Paragraph(f"{stamp_duty:.2f} €", normal_style)])
-        grand_total = round(grand_total + stamp_duty, 2)
-        
-    data.append([Paragraph("<b>TOTALE COMPLESSIVO</b>", bold_style), Paragraph(f"<b>{grand_total:.2f} €</b>", bold_style)])
-    
-    t = Table(data, colWidths=[400, 100])
-    t.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (1, 0), colors.HexColor("#e9ecef")),
-        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor("#212529")),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('LINEBELOW', (0, 0), (-1, -2), 0.5, colors.lightgrey),
-        ('LINEABOVE', (0, -1), (1, -1), 1, colors.HexColor("#1b4332")),
-    ]))
-    
-    story.append(t)
-    story.append(Spacer(1, 30))
-    
-    # Dicitura esenzione IVA (Obbligatoria per le locazioni turistiche / B&B non imprenditoriali)
-    disclaimer = "Operazione effettuata da privato fuori dal campo di applicazione dell'IVA ai sensi dell'art. 4 del D.P.R. 633/1972 e successive modificazioni."
-    story.append(Paragraph(f"<font size=8 color='gray'>{disclaimer}</font>", normal_style))
-    
-    doc.build(story)
-    buf.seek(0)
-    
-    filename = f"ricevuta_{booking.get('guest_last_name', 'ospite')}.pdf"
-    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
-
-# --------------------- Alloggiati Web Export ---------------------
-def format_alloggiati_record(b: dict) -> Optional[str]:
+    # --- Generazione del PDF in memoria tramite ReportLab ---
     try:
-        ci = datetime.fromisoformat(b["checkin"]).date()
-        nights = str(b.get("nights", 1)).zfill(2)
-        tipo = (b.get("guest_type") or "16").ljust(2)
-        cognome = (b.get("guest_last_name") or "").upper().ljust(50)[:50]
-        nome = (b.get("guest_first_name") or "").upper().ljust(30)[:30]
-        sesso = (b.get("sex") or "M").ljust(1)[:1]
-        dob = b.get("date_of_birth", "1980-01-01")
-        try:
-            dob_d = datetime.fromisoformat(dob).date()
-            dob_str = f"{dob_d.day:02d}/{dob_d.month:02d}/{dob_d.year}"
-        except Exception:
-            dob_str = "01/01/1980"
-        comune_nascita = (b.get("place_of_birth") or "").upper().ljust(9)[:9]
-        provincia = "  "
-        stato_nascita = (b.get("country_of_birth") or "ITALIA").upper().ljust(9)[:9]
-        cittadinanza = (b.get("citizenship") or "ITALIA").upper().ljust(9)[:9]
-        doc_tipo = (b.get("document_type") or "IDENT").ljust(5)[:5]
-        doc_num = (b.get("document_number") or "").upper().ljust(20)[:20]
-        doc_luogo = (b.get("document_place") or "").upper().ljust(9)[:9]
-        arrivo = f"{ci.day:02d}/{ci.month:02d}/{ci.year}"
-        return f"{tipo}{arrivo}{nights}{cognome}{nome}{sesso}{dob_str}{comune_nascita}{provincia}{stato_nascita}{cittadinanza}{doc_tipo}{doc_num}{doc_luogo}"
-    except Exception as e:
-        logger.warning(f"Skip record: {e}")
-        return None
-
-@api.get("/alloggiati/export", response_class=PlainTextResponse)
-async def alloggiati_export(start_date: str, end_date: str, user: dict = Depends(get_current_user)):
-    bookings = await db.bookings.find({
-        "owner_id": user["id"],
-        "checkin": {"$gte": start_date, "$lte": end_date}
-    }).to_list(1000)
-    lines = [l for b in bookings if (l := format_alloggiati_record(b))]
-    return PlainTextResponse("\r\n".join(lines), headers={"Content-Disposition": f'attachment; filename="alloggiati_{start_date}_{end_date}.txt"'})
-
-@api.get("/alloggiati/export-zip")
-async def alloggiati_export_zip(start_date: str, end_date: str, user: dict = Depends(get_current_user)):
-    bookings = await db.bookings.find({
-        "owner_id": user["id"],
-        "checkin": {"$gte": start_date, "$lte": end_date}
-    }).to_list(1000)
-    lines = [l for b in bookings if (l := format_alloggiati_record(b))]
-    photo_files = []
-    for b in bookings:
-        safe_name = f"{(b.get('guest_last_name') or 'X').upper()}_{(b.get('guest_first_name') or 'X').upper()}".replace(" ", "_")
-        for i, p in enumerate(b.get("photo_paths", []) or []):
-            fpath = UPLOAD_DIR / p
-            if fpath.exists():
-                ext = fpath.suffix or ".jpg"
-                arc = f"foto_documenti/{safe_name}_{i + 1}{ext}"
-                photo_files.append((arc, str(fpath)))
-    buf = BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(f"alloggiati_{start_date}_{end_date}.txt", "\r\n".join(lines))
-        for arc, fpath in photo_files:
-            zf.write(fpath, arc)
-        zf.writestr("LEGGIMI.txt",
-                    "Carica il file .txt sul portale Alloggiati Web della Polizia di Stato.\r\n"
-                    "La cartella foto_documenti contiene le foto dei documenti per il tuo archivio interno.")
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="alloggiati_{start_date}_{end_date}.zip"'})
-
-@api.get("/uploads/{filename}")
-async def get_upload(filename: str, user: dict = Depends(get_current_user)):
-    fpath = UPLOAD_DIR / filename
-    if not fpath.exists() or ".." in filename or "/" in filename:
-        raise HTTPException(404, "File non trovato")
-    return FileResponse(str(fpath))
-
-# --------------------- Public Guest Registration ---------------------
-@api.get("/public/property-info")
-async def public_property_info():
-    admin = await db.users.find_one({"email": "giuseppesica01@gmail.com"})
-    if not admin:
-        raise HTTPException(404, "Struttura non configurata")
-    return {"name": "Casa B&B", "active": True}
-
-@api.post("/public/registration")
-async def public_registration(
-    guest_first_name: str = Form(...), guest_last_name: str = Form(...),
-    checkin: str = Form(...), checkout: str = Form(...), channel: str = Form("Direct"),
-    document_number: str = Form(...), date_of_birth: str = Form(...), place_of_birth: str = Form(...),
-    country_of_birth: str = Form("ITALIA"), citizenship: str = Form("ITALIA"), sex: str = Form("M"),
-    document_type: str = Form("IDENT"), document_place: str = Form(""), photos: List[UploadFile] = File(default=[]),
-):
-    proprietario = await db.users.find_one({"email": "giuseppesica01@gmail.com"})
-    if not proprietario:
-        raise HTTPException(400, "Struttura non configurata")
-    owner_id = str(proprietario["_id"])
-
-    photo_paths = []
-    for f in photos or []:
-        if not f.filename: continue
-        ext = Path(f.filename).suffix.lower() or ".jpg"
-        if ext not in [".jpg", ".jpeg", ".png", ".webp", ".pdf", ".heic"]: continue
-        safe = f"doc_{uuid.uuid4().hex}{ext}"
-        content = await f.read()
-        if len(content) > 15 * 1024 * 1024:
-            raise HTTPException(400, f"File {f.filename} troppo grande (max 15MB)")
-        (UPLOAD_DIR / safe).write_bytes(content)
-        photo_paths.append(safe)
-
-    nights = nights_between(checkin, checkout)
-    doc = {
-        "guest_first_name": guest_first_name.strip(), "guest_last_name": guest_last_name.strip(),
-        "checkin": checkin, "checkout": checkout, "gross_price": 0.0, "channel": channel,
-        "date_of_birth": date_of_birth, "place_of_birth": place_of_birth.strip(),
-        "country_of_birth": country_of_birth, "citizenship": citizenship, "sex": sex,
-        "document_type": document_type, "document_number": document_number, "document_place": document_place,
-        "nights": nights, "net_revenue": 0.0, "owner_id": owner_id, "photo_paths": photo_paths,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    result = await db.bookings.insert_one(doc)
-    return {"ok": True, "id": str(result.inserted_id), "photos_uploaded": len(photo_paths)}
-
-@api.get("/alloggiati/preview")
-async def alloggiati_preview(start_date: str, end_date: str, user: dict = Depends(get_current_user)):
-    bookings = await db.bookings.find({"owner_id": user["id"], "checkin": {"$gte": start_date, "$lte": end_date}}).to_list(1000)
-    records = []
-    for b in bookings:
-        line = format_alloggiati_record(b)
-        records.append({
-            "guest": f"{b.get('guest_first_name', '')} {b.get('guest_last_name', '')}",
-            "checkin": b.get("checkin"), "nights": b.get("nights"), "valid": line is not None,
-            "line_preview": line[:80] + "..." if line and len(line) > 80 else line,
-            "missing": [k for k in ["date_of_birth", "place_of_birth", "document_number"] if not b.get(k)],
-        })
-    return {"total": len(bookings), "records": records}
-
-# --------------------- ROSS 1000 Lazio (ISTAT) ---------------------
-class Ross1000Settings(BaseModel):
-    codice_struttura: str
-    camere_disponibili: int
-    letti_disponibili: int
-
-@api.get("/ross1000/settings")
-async def get_ross_settings(user: dict = Depends(get_current_user)):
-    doc = await db.settings.find_one({"owner_id": user["id"], "kind": "ross1000"})
-    if not doc:
-        return {"codice_struttura": "", "camere_disponibili": 1, "letti_disponibili": 2}
-    return {"codice_struttura": doc.get("codice_struttura", ""), "camere_disponibili": doc.get("camere_disponibili", 1), "letti_disponibili": doc.get("letti_disponibili", 2)}
-
-@api.post("/ross1000/settings")
-async def save_ross_settings(payload: Ross1000Settings, user: dict = Depends(get_current_user)):
-    await db.settings.update_one({"owner_id": user["id"], "kind": "ross1000"}, {"$set": {**payload.model_dump(), "owner_id": user["id"], "kind": "ross1000", "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
-    return {"ok": True}
-
-async def _load_ross_settings(user_id: str) -> dict:
-    doc = await db.settings.find_one({"owner_id": user_id, "kind": "ross1000"})
-    if not doc or not doc.get("codice_struttura"):
-        raise HTTPException(400, "Configura prima il codice struttura in Impostazioni ROSS 1000.")
-    return doc
-
-async def _month_bookings(user_id: str, year: int, month: int) -> list:
-    _, last_day = __import__("calendar").monthrange(year, month)
-    return await db.bookings.find({"owner_id": user_id, "checkin": {"$lte": date(year, month, last_day).isoformat()}, "checkout": {"$gt": date(year, month, 1).isoformat()}}).to_list(2000)
-
-@api.get("/ross1000/preview")
-async def ross_preview(year: int, month: int, user: dict = Depends(get_current_user)):
-    settings = await _load_ross_settings(user["id"])
-    bookings = await _month_bookings(user["id"], year, month)
-    stats = compute_month_stats(year, month, bookings, settings["camere_disponibili"])
-    stats["codice_struttura"] = settings["codice_struttura"]
-    return stats
-
-@api.get("/ross1000/export-xml", response_class=PlainTextResponse)
-async def ross_export_xml(year: int, month: int, user: dict = Depends(get_current_user)):
-    settings = await _load_ross_settings(user["id"])
-    bookings = await _month_bookings(user["id"], year, month)
-    xml = build_movimenti_xml(codice_struttura=settings["codice_struttura"], year=year, month=month, bookings=bookings, camere_disponibili=settings["camere_disponibili"], letti_disponibili=settings["letti_disponibili"])
-    return PlainTextResponse(xml, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="ross1000_{year}_{month:02d}.xml"'})
-
-app.include_router(api)
+        buf = BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+        styles = getSampleStyleSheet()
+        
+        # Stili personalizzati per rendere la ricevuta elegante ed ordinata
+        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=22, textColor=colors.HexColor("#1b4332"), spaceAfter=15)
+        normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=10, leading=14)
+        bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontSize=10, fontName="Helvetica-Bold")
+        
+        story = []
+        
+        # Intestazione Struttura Ricettiva
