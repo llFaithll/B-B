@@ -577,7 +577,7 @@ async def save_tax_settings(payload: TaxSettingsIn, user: dict = Depends(get_cur
     )
     return {"ok": True}
 
-# --------------------- GENERAZIONE RICEVUTA PDF (VERSIONE BLINDATA ED INDISTRUTTIBILE) ---------------------
+# --------------------- GENERAZIONE RICEVUTA PDF ---------------------
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -594,7 +594,6 @@ async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int 
     if not booking:
         raise HTTPException(status_code=404, detail="Prenotazione non trovata")
         
-    # 1. Recupero ultra-sicuro delle impostazioni con i nuovi campi personalizzati
     try:
         tax_settings = await db.settings.find_one({"owner_id": user["id"], "kind": "tourist_tax"})
         if tax_settings:
@@ -614,7 +613,6 @@ async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int 
         property_name = "Casa B&B"
         manager_name = user.get("name", "Gestore B&B").strip()
     
-    # 2. Conversione forzata di "nights" per evitare crash se salvato come stringa o nullo in MongoDB
     try:
         raw_nights = booking.get("nights")
         booking_nights = int(raw_nights) if raw_nights is not None else 1
@@ -624,10 +622,8 @@ async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int 
     if booking_nights <= 0:
         booking_nights = 1
         
-    # Calcolo Notti Tassabili
     nights = min(booking_nights, max_n)
     
-    # 3. Conversione forzata degli ospiti passati dal frontend
     try:
         g_count = max(int(guests_count), 1)
         k_count = max(int(kids_count), 0)
@@ -638,7 +634,6 @@ async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int 
     adults_count = max(g_count - k_count, 1)
     total_tax = round(fee * nights * adults_count, 2)
     
-    # 4. Conversione forzata del prezzo lordo
     try:
         gross_stay = float(booking.get("gross_price", 0.0))
     except (ValueError, TypeError):
@@ -647,7 +642,6 @@ async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int 
     grand_total = round(gross_stay + total_tax, 2)
     stamp_duty = 2.0 if gross_stay > 77.47 else 0.0
 
-    # --- Generazione del PDF in memoria tramite ReportLab ---
     try:
         buf = BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
@@ -659,7 +653,6 @@ async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int 
         
         story = []
         
-        # Intestazione Struttura Ricettiva Dinamica
         story.append(Paragraph("RICEVUTA NON FISCALE", title_style))
         story.append(Paragraph(f"<b>Struttura:</b> {property_name}<br/><b>Gestore:</b> {manager_name}<br/><b>Email:</b> {user.get('email')}", normal_style))
         story.append(Spacer(1, 20))
@@ -710,29 +703,38 @@ async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int 
         logger.error(f"Errore nella generazione del PDF: {e}")
         raise HTTPException(status_code=500, detail="Errore interno durante la generazione del documento PDF")
 
-# --------------------- Alloggiati Web Export ---------------------
-def format_alloggiati_record(b: dict) -> Optional[str]:
+# --------------------- Alloggiati Web Export (MULTI-OSPITE) ---------------------
+def format_alloggiati_record(b: dict, is_additional: bool = False, parent_booking: Optional[dict] = None) -> Optional[str]:
     try:
-        ci = datetime.fromisoformat(b["checkin"]).date()
-        nights = str(b.get("nights", 1)).zfill(2)
-        tipo = (b.get("guest_type") or "16").ljust(2)
+        context = parent_booking if is_additional else b
+        ci = datetime.fromisoformat(context["checkin"]).date()
+        nights = str(context.get("nights", 1)).zfill(2)
+        
+        default_type = "17" if is_additional else "16"
+        tipo = (b.get("guest_type") or default_type).ljust(2)
+        
         cognome = (b.get("guest_last_name") or "").upper().ljust(50)[:50]
         nome = (b.get("guest_first_name") or "").upper().ljust(30)[:30]
         sesso = (b.get("sex") or "M").ljust(1)[:1]
+        
         dob = b.get("date_of_birth", "1980-01-01")
         try:
             dob_d = datetime.fromisoformat(dob).date()
             dob_str = f"{dob_d.day:02d}/{dob_d.month:02d}/{dob_d.year}"
         except Exception:
             dob_str = "01/01/1980"
+            
         comune_nascita = (b.get("place_of_birth") or "").upper().ljust(9)[:9]
         provincia = "  "
         stato_nascita = (b.get("country_of_birth") or "ITALIA").upper().ljust(9)[:9]
         cittadinanza = (b.get("citizenship") or "ITALIA").upper().ljust(9)[:9]
+        
         doc_tipo = (b.get("document_type") or "IDENT").ljust(5)[:5]
         doc_num = (b.get("document_number") or "").upper().ljust(20)[:20]
         doc_luogo = (b.get("document_place") or "").upper().ljust(9)[:9]
+        
         arrivo = f"{ci.day:02d}/{ci.month:02d}/{ci.year}"
+        
         return f"{tipo}{arrivo}{nights}{cognome}{nome}{sesso}{dob_str}{comune_nascita}{provincia}{stato_nascita}{cittadinanza}{doc_tipo}{doc_num}{doc_luogo}"
     except Exception as e:
         logger.warning(f"Skip record: {e}")
@@ -744,7 +746,18 @@ async def alloggiati_export(start_date: str, end_date: str, user: dict = Depends
         "owner_id": user["id"],
         "checkin": {"$gte": start_date, "$lte": end_date}
     }).to_list(1000)
-    lines = [l for b in bookings if (l := format_alloggiati_record(b))]
+    
+    lines = []
+    for b in bookings:
+        main_line = format_alloggiati_record(b, is_additional=False)
+        if main_line:
+            lines.append(main_line)
+            
+        for extra in b.get("additional_guests", []):
+            extra_line = format_alloggiati_record(extra, is_additional=True, parent_booking=b)
+            if extra_line:
+                lines.append(extra_line)
+                
     return PlainTextResponse("\r\n".join(lines), headers={"Content-Disposition": f'attachment; filename="alloggiati_{start_date}_{end_date}.txt"'})
 
 @api.get("/alloggiati/export-zip")
@@ -753,16 +766,28 @@ async def alloggiati_export_zip(start_date: str, end_date: str, user: dict = Dep
         "owner_id": user["id"],
         "checkin": {"$gte": start_date, "$lte": end_date}
     }).to_list(1000)
-    lines = [l for b in bookings if (l := format_alloggiati_record(b))]
+    
+    lines = []
     photo_files = []
+    
     for b in bookings:
+        main_line = format_alloggiati_record(b, is_additional=False)
+        if main_line:
+            lines.append(main_line)
+        
+        for extra in b.get("additional_guests", []):
+            extra_line = format_alloggiati_record(extra, is_additional=True, parent_booking=b)
+            if extra_line:
+                lines.append(extra_line)
+                
         safe_name = f"{(b.get('guest_last_name') or 'X').upper()}_{(b.get('guest_first_name') or 'X').upper()}".replace(" ", "_")
         for i, p in enumerate(b.get("photo_paths", []) or []):
             fpath = UPLOAD_DIR / p
             if fpath.exists():
                 ext = fpath.suffix or ".jpg"
-                arc = f"foto_documenti/{safe_name}_{i + 1}{ext}"
+                arc = f"foto_documenti/{safe_name}/documento_{i + 1}{ext}"
                 photo_files.append((arc, str(fpath)))
+                
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(f"alloggiati_{start_date}_{end_date}.txt", "\r\n".join(lines))
@@ -770,7 +795,7 @@ async def alloggiati_export_zip(start_date: str, end_date: str, user: dict = Dep
             zf.write(fpath, arc)
         zf.writestr("LEGGIMI.txt",
                     "Carica il file .txt sul portale Alloggiati Web della Polizia di Stato.\r\n"
-                    "La cartella foto_documenti contiene le foto dei documenti per il tuo archivio interno.")
+                    "La cartella foto_documenti contiene le foto divise per stanza dei tuoi ospiti.")
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="alloggiati_{start_date}_{end_date}.zip"'})
 
@@ -810,7 +835,6 @@ async def public_registration(
     document_type: str = Form("IDENT"), document_place: str = Form(""),
     additional_guests_json: Optional[str] = Form(default="[]")
 ):
-    # Identificazione dinamica dell'account proprietario per salvare la registrazione
     proprietario = await db.users.find_one({"role": "admin"})
     if not proprietario:
         proprietario = await db.users.find_one()
@@ -819,11 +843,9 @@ async def public_registration(
         raise HTTPException(400, "Struttura non configurata")
     owner_id = str(proprietario["_id"])
 
-    # Lettura flessibile dei file binari multipart
     form_data = await request.form()
     photo_paths = []
 
-    # 1. Salvataggio della foto del Capogruppo
     main_photo = form_data.get("main_photo")
     if main_photo and hasattr(main_photo, "filename") and main_photo.filename:
         ext = Path(main_photo.filename).suffix.lower() or ".jpg"
@@ -833,7 +855,6 @@ async def public_registration(
             (UPLOAD_DIR / safe).write_bytes(content)
             photo_paths.append(safe)
 
-    # 2. Parsing sequenziale e salvataggio degli altri componenti del gruppo
     processed_additional_guests = []
     try:
         guests_list = json.loads(additional_guests_json)
@@ -867,10 +888,8 @@ async def public_registration(
             "photo_paths": guest_photos
         })
 
-    # Calcolo automatico della durata del pernottamento
     nights = nights_between(checkin, checkout)
     
-    # Inserimento dei record all'interno della medesima transazione MongoDB
     doc = {
         "guest_first_name": guest_first_name.strip(), 
         "guest_last_name": guest_last_name.strip(),
@@ -959,5 +978,5 @@ async def ross_export_xml(year: int, month: int, user: dict = Depends(get_curren
     xml = build_movimenti_xml(codice_struttura=settings["codice_struttura"], year=year, month=month, bookings=bookings, camere_disponibili=settings["camere_disponibili"], letti_disponibili=settings["letti_disponibili"])
     return PlainTextResponse(xml, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="ross1000_{year}_{month:02d}.xml"'})
 
-# Inclusione formale conclusiva di tutte le rotte API su FastAPI
+# Registrazione conclusiva essenziale per attivare tutte le rotte API su FastAPI
 app.include_router(api)
