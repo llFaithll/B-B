@@ -580,16 +580,44 @@ async def generate_receipt_pdf(bid: str, guests_count: int = 1, kids_count: int 
     if not booking:
         raise HTTPException(status_code=404, detail="Prenotazione non trovata")
         
+    # Recupero sicuro delle impostazioni della tassa di soggiorno con valori di default robusti
     tax_settings = await db.settings.find_one({"owner_id": user["id"], "kind": "tourist_tax"})
-    fee = tax_settings.get("fee_per_night", 3.50) if tax_settings else 3.50
-    max_n = tax_settings.get("max_nights", 10) if tax_settings else 10
+    if tax_settings:
+        fee = float(tax_settings.get("fee_per_night", 3.50))
+        max_n = int(tax_settings.get("max_nights", 10))
+    else:
+        fee = 3.50
+        max_n = 10
     
+    # Conversione e controllo di sicurezza sulle notti della prenotazione
+    try:
+        booking_nights = int(booking.get("nights", 1))
+    except (ValueError, TypeError):
+        booking_nights = 1
+        
+    if booking_nights <= 0:
+        booking_nights = 1
+        
     # Calcolo Tassa di Soggiorno applicando i limiti delle notti tassabili
-    nights = min(booking.get("nights", 1), max_n)
-    adults_count = max(guests_count - kids_count, 1)
+    nights = min(booking_nights, max_n)
+    
+    # Prevenzione valori negativi o errati per gli ospiti
+    try:
+        g_count = max(int(guests_count), 1)
+        k_count = max(int(kids_count), 0)
+    except (ValueError, TypeError):
+        g_count = 1
+        k_count = 0
+        
+    adults_count = max(g_count - k_count, 1)
     total_tax = round(fee * nights * adults_count, 2)
     
-    gross_stay = booking.get("gross_price", 0.0)
+    # Conversione sicura del prezzo lordo della camera
+    try:
+        gross_stay = float(booking.get("gross_price", 0.0))
+    except (ValueError, TypeError):
+        gross_stay = 0.0
+        
     grand_total = round(gross_stay + total_tax, 2)
     
     # Controllo Marca da Bollo italiana (2€ se superi i 77.47€)
